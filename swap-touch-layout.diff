@@ -1,0 +1,436 @@
+diff --git a/.github/workflows/manual_generate_apk.yml b/.github/workflows/manual_generate_apk.yml
+--- a/.github/workflows/manual_generate_apk.yml
++++ b/.github/workflows/manual_generate_apk.yml
+@@ -54,12 +54,7 @@ jobs:
+       #  uses: nttld/setup-ndk@v1
+       #  with:
+       #    ndk-version: r21e
+-
+-      - name: Test androidGitVersion
+-        run: |
+-          echo "count=${{steps.valid-tags.outputs.count}}"
+-          gradle --quiet androidGitVersion
+-      
++  
+       - name: Assemble APK
+         run: ./gradlew assemble${{ github.event.inputs.buildVariant }} --stacktrace
+
+diff --git a/Core/Config.cpp b/Core/Config.cpp
+--- a/Core/Config.cpp
++++ b/Core/Config.cpp
+@@ -1027,6 +1027,9 @@ static const ConfigSetting controlSettings[] = {
+
+ 	ConfigSetting("SystemControls", SETTING(g_Config, bSystemControls), true, CfgFlag::DEFAULT),
+ 	ConfigSetting("RapidFileInterval", SETTING(g_Config, iRapidFireInterval), 5, CfgFlag::DEFAULT),
++	
++	// Touch layout selection for swap layout feature (persisted value)
++	ConfigSetting("TouchLayoutSelection", SETTING(g_Config, iTouchLayoutSelectionSaved), 1, CfgFlag::PER_GAME),
+ };
+
+ static const ConfigSetting networkSettings[] = {
+@@ -1151,6 +1154,8 @@ static const ConfigSectionMeta g_sectionMeta[] = {
+ 	{ &g_Config.displayLayoutPortrait, displayLayoutSettings, ARRAY_SIZE(displayLayoutSettings), "DisplayLayout.Portrait"},  // These we don't want to read from the old settings, since for most people, those settings will be bad.
+ 	{ &g_Config.touchControlsLandscape, touchControlSettings, ARRAY_SIZE(touchControlSettings), "TouchControls.Landscape", "Control" },  // We read the old settings from [Control], since most people played in landscape before.
+ 	{ &g_Config.touchControlsPortrait, touchControlSettings, ARRAY_SIZE(touchControlSettings), "TouchControls.Portrait"},  // These we don't want to read from the old settings, since for most people, those settings will be bad.
++	{ &g_Config.touchControlsLandscapeLayout2, touchControlSettings, ARRAY_SIZE(touchControlSettings), "TouchControls.LandscapeLayout2" },
++	{ &g_Config.touchControlsPortraitLayout2, touchControlSettings, ARRAY_SIZE(touchControlSettings), "TouchControls.PortraitLayout2" },
+ 	{ &g_Config.gestureControls[0], gestureControlSettings, ARRAY_SIZE(gestureControlSettings), "GestureControls.Left", "General"},  // We read the old settings from [General], since most of them used to be there (except the analog stuff).
+ 	{ &g_Config.gestureControls[1], gestureControlSettings, ARRAY_SIZE(gestureControlSettings), "GestureControls.Right", "General"},  // We read the old settings from [General], since most of them used to be there (except the analog stuff).
+ };
+@@ -1391,8 +1396,14 @@ void Config::Load(const char *iniFileName, const char *controllerIniFilename) {
+ 	// but these configs shouldn't contain older versions anyhow
+ 	_dbg_assert_(!IsGameSpecific());
+
++	// Ensure layout2 defaults are initialized from layout1 so swapping is visible
++	EnsureSecondaryLayoutsInitialized();
++
+ 	PostLoadCleanup();
+
++	// Apply persisted layout selection to runtime selection.
++	g_Config.iTouchLayoutSelection = g_Config.iTouchLayoutSelectionSaved;
++
+ 	INFO_LOG(Log::Loader, "Config loaded: '%s' (%0.1f ms)", iniFilename_.c_str(), (time_now_d() - startTime) * 1000.0);
+ }
+
+@@ -1799,6 +1810,9 @@ bool Config::LoadGameConfig(const std::string &gameId) {
+ 	PostLoadCleanup();
+
+ 	DEBUG_LOG(Log::Loader, "Game-specific config loaded: %s", gameId_.c_str());
++
++	// Apply persisted layout selection to runtime selection for game-specific mode.
++	g_Config.iTouchLayoutSelection = g_Config.iTouchLayoutSelectionSaved;
+ 	return true;
+ }
+
+@@ -1976,3 +1990,49 @@ int MultiplierToVolume100(float multiplier) {
+ float UIScaleFactorToMultiplier(int factor) {
+ 	return powf(2.0f, (float)factor / 8.0f);
+ }
++void Config::SwapTouchControlsLayouts() {
++	// Instead of swapping the large layout structs themselves,
++	// just toggle the selection between layout 1 and 2.
++	// This is much safer: avoids invalidating any references/pointers
++	// to the layout structs, and is atomic.
++	if (iTouchLayoutSelection == 1) {
++		iTouchLayoutSelection = 2;
++	} else {
++		iTouchLayoutSelection = 1;
++	}
++	// Note: do NOT auto-save here. Caller should persist if desired.
++}
++
++void Config::EnsureSecondaryLayoutsInitialized() {
++	auto IsConfigured = [](const TouchControlConfig &c) {
++		// If any position has been set (x >= 0), or any custom button is visible,
++		// consider the layout configured.
++		auto posSet = [](const ConfigTouchPos &p) { return p.x >= 0.0f || p.y >= 0.0f; };
++
++		if (posSet(c.touchActionButtonCenter) || posSet(c.touchDpad) || posSet(c.touchStartKey) ||
++			posSet(c.touchSelectKey) || posSet(c.touchFastForwardKey) || posSet(c.touchLKey) ||
++			posSet(c.touchRKey) || posSet(c.touchAnalogStick) || posSet(c.touchRightAnalogStick) ||
++			posSet(c.touchPauseKey)) {
++			return true;
++		}
++
++		for (size_t i = 0; i < TouchControlConfig::CUSTOM_BUTTON_COUNT; ++i) {
++			if (c.touchCustom[i].show)
++				return true;
++			if (posSet(c.touchCustom[i]))
++				return true;
++		}
++
++		return false;
++	};
++
++	if (!IsConfigured(touchControlsPortraitLayout2)) {
++		// Use preset defaults for the secondary layout instead of copying
++		// the primary layout. This avoids unintentionally duplicating
++		// user-customized primary layouts into layout 2.
++		touchControlsPortraitLayout2.ResetToDefault("TouchControls.PortraitLayout2");
++	}
++	if (!IsConfigured(touchControlsLandscapeLayout2)) {
++		touchControlsLandscapeLayout2.ResetToDefault("TouchControls.LandscapeLayout2");
++	}
++}
+\ No newline at end of file
+diff --git a/Core/Config.h b/Core/Config.h
+--- a/Core/Config.h
++++ b/Core/Config.h
+@@ -494,6 +494,20 @@ struct Config : public ConfigBlock {
+ 	TouchControlConfig touchControlsLandscape;
+ 	TouchControlConfig touchControlsPortrait;
+
++	// Alternative layout (for swap layout feature)
++	TouchControlConfig touchControlsLandscapeLayout2;
++	TouchControlConfig touchControlsPortraitLayout2;
++	
++	// Current layout selection (1 for primary layout, 2 for secondary layout)
++	// Runtime selection used by UI/runtime. This value reflects the currently
++	// active layout during runtime but is not written directly to the ini when
++	// changed in-game via button bindings.
++	int iTouchLayoutSelection = 1;
++
++	// Persisted selection stored in ini. Editor changes should update this
++	// value so the user's saved preference is preserved across restarts.
++	int iTouchLayoutSelectionSaved = 1;
++
+ 	// These are shared between portrait and landscape, just the positions aren't.
+ 	ConfigCustomButton CustomButton[TouchControlConfig::CUSTOM_BUTTON_COUNT];
+
+@@ -719,7 +733,30 @@ struct Config : public ConfigBlock {
+ 		return orientation == DeviceOrientation::Portrait ? touchControlsPortrait : touchControlsLandscape;
+ 	}
+
++	// Get the touched control config based on current layout selection
++	const TouchControlConfig &GetCurrentTouchControlsConfig(DeviceOrientation orientation) const {
++		if (iTouchLayoutSelection == 2) {
++			return orientation == DeviceOrientation::Portrait ? touchControlsPortraitLayout2 : touchControlsLandscapeLayout2;
++		}
++		return orientation == DeviceOrientation::Portrait ? touchControlsPortrait : touchControlsLandscape;
++	}
++	TouchControlConfig &GetCurrentTouchControlsConfig(DeviceOrientation orientation) {
++		if (iTouchLayoutSelection == 2) {
++			return orientation == DeviceOrientation::Portrait ? touchControlsPortraitLayout2 : touchControlsLandscapeLayout2;
++		}
++		return orientation == DeviceOrientation::Portrait ? touchControlsPortrait : touchControlsLandscape;
++	}
++	
++	// Exchange layout selections between mode 1 and 2
++	void SwapTouchControlsLayouts();
++
++	// Ensure layout2 is initialized as a copy of layout1 if empty
++	void EnsureSecondaryLayoutsInitialized();
++
+ 	static int GetDefaultValueInt(int *configSetting);
++	// Initialize Layout 2 as copy of Layout 1 if not already configured
++	void InitializeLayout2IfNeeded();
++
+
+ 	void DoNotSaveSetting(void *configSetting) {
+ 		settingsNotToSave_.push_back(configSetting);
+diff --git a/Core/KeyMap.cpp b/Core/KeyMap.cpp
+--- a/Core/KeyMap.cpp
++++ b/Core/KeyMap.cpp
+@@ -443,6 +443,7 @@ const KeyMap_IntStrPair psp_button_names[] = {
+ #endif
+ 	{VIRTKEY_TOGGLE_DEBUGGER, "Toggle Debugger"},
+ 	{VIRTKEY_TOGGLE_TILT, "Toggle tilt control"},
++	{VIRTKEY_SWAP_LAYOUT, "Swap layout"},
+
+ 	{VIRTKEY_OPENCHAT, "OpenChat" },
+
+diff --git a/Core/KeyMap.h b/Core/KeyMap.h
+--- a/Core/KeyMap.h
++++ b/Core/KeyMap.h
+@@ -81,6 +81,7 @@ enum VirtKey {
+ 	VIRTKEY_TOGGLE_DEBUGGER = 0x40000033,
+ 	VIRTKEY_PAUSE_NO_MENU = 0x40000034,
+ 	VIRTKEY_TOGGLE_TILT = 0x40000035,
++	VIRTKEY_SWAP_LAYOUT = 0x40000036,
+ 	VIRTKEY_LAST,
+ 	VIRTKEY_COUNT = VIRTKEY_LAST - VIRTKEY_FIRST
+ };
+diff --git a/UI/CustomButtonMappingScreen.cpp b/UI/CustomButtonMappingScreen.cpp
+--- a/UI/CustomButtonMappingScreen.cpp
++++ b/UI/CustomButtonMappingScreen.cpp
+@@ -131,7 +131,7 @@ void CustomButtonMappingScreen::CreateDialogViews(UI::ViewGroup *parent) {
+ 	LinearLayout *leftColumn = new LinearLayout(ORIENT_VERTICAL, new LinearLayoutParams(120, FILL_PARENT));
+ 	auto di = GetI18NCategory(I18NCat::DIALOG);
+
+-	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(deviceOrientation_);
++	TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(deviceOrientation_);
+
+ 	ConfigCustomButton *cfg = nullptr;
+ 	bool *show = nullptr;
+diff --git a/UI/EmuScreen.cpp b/UI/EmuScreen.cpp
+--- a/UI/EmuScreen.cpp
++++ b/UI/EmuScreen.cpp
+@@ -892,6 +892,17 @@ void EmuScreen::OnVKey(VirtKey virtualKeyCode, bool down) {
+ 	case VIRTKEY_RAPID_FIRE:
+ 		__CtrlSetRapidFire(down, g_Config.iRapidFireInterval);
+ 		break;
++
++	case VIRTKEY_SWAP_LAYOUT:
++		if (down) {
++			// Only perform minimal operations during emulation:
++			// Toggle layout selection between 1 and 2.
++			// This is safer than swapping struct contents, avoids invalidating references.
++			g_Config.SwapTouchControlsLayouts();
++			System_PostUIMessage(UIMessage::RECREATE_VIEWS);
++		}
++		break;
++
+ 	default:
+ 		// To make sure we're not in an async context.
+ 		if (down) {
+@@ -1302,7 +1313,7 @@ void EmuScreen::CreateViews() {
+
+ 	const DeviceOrientation deviceOrientation = GetDeviceOrientation();
+
+-	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(deviceOrientation);
++	TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(deviceOrientation);
+
+ 	const Bounds &bounds = screenManager()->getUIContext()->GetLayoutBounds();
+ 	InitPadLayout(&touch, deviceOrientation, bounds.w, bounds.h);
+diff --git a/UI/GameSettingsScreen.cpp b/UI/GameSettingsScreen.cpp
+--- a/UI/GameSettingsScreen.cpp
++++ b/UI/GameSettingsScreen.cpp
+@@ -906,7 +906,7 @@ void GameSettingsScreen::CreateControlsSettings(UI::ViewGroup *controlsSettings)
+ 		CheckBox *touchGliding = controlsSettings->Add(new CheckBox(&g_Config.bTouchGliding, co->T("Keep first touched button pressed when dragging")));
+ 		touchGliding->SetEnabledPtr(&g_Config.bShowTouchControls);
+
+-		TouchControlConfig &touch = g_Config.GetTouchControlsConfig(GetDeviceOrientation());
++		TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(GetDeviceOrientation());
+
+ 		// Hide stick background, useful when increasing the size
+ 		CheckBox *hideStickBackground = controlsSettings->Add(new CheckBox(&touch.bHideStickBackground, co->T("Hide touch analog stick background circle")));
+diff --git a/UI/GamepadEmu.cpp b/UI/GamepadEmu.cpp
+--- a/UI/GamepadEmu.cpp
++++ b/UI/GamepadEmu.cpp
+@@ -492,7 +492,7 @@ void PSPStick::Draw(UIContext &dc) {
+ 	__CtrlPeekAnalog(stick_, &dx, &dy);
+ 	rotateTouchHelper(dx, dy);
+
+-	const TouchControlConfig &config = g_Config.GetTouchControlsConfig(g_display.GetDeviceOrientation());
++	const TouchControlConfig &config = g_Config.GetCurrentTouchControlsConfig(g_display.GetDeviceOrientation());
+
+ 	if (!config.bHideStickBackground)
+ 		dc.Draw()->DrawImage(bgImg_, stickX, stickY, 1.0f * scale_, colorBg, ALIGN_CENTER);
+@@ -514,7 +514,7 @@ bool PSPStick::Touch(const TouchInput &input) {
+ 		return retval;
+ 	}
+ 	if (input.flags & TouchInputFlags::DOWN) {
+-		const TouchControlConfig &config = g_Config.GetTouchControlsConfig(g_display.GetDeviceOrientation());
++		const TouchControlConfig &config = g_Config.GetCurrentTouchControlsConfig(g_display.GetDeviceOrientation());
+ 		float fac = 0.5f * (stick_ ? config.fRightStickHeadScale : config.fLeftStickHeadScale)-0.5f;
+ 		if (dragPointerId_ == -1 && bounds_.Expand(bounds_.w*fac, bounds_.h*fac).Contains(input.x, input.y)) {
+ 			if (g_Config.bAutoCenterTouchAnalog) {
+@@ -604,7 +604,7 @@ void PSPCustomStick::Draw(UIContext &dc) {
+ 	dx = posX_;
+ 	dy = -posY_;
+
+-	const TouchControlConfig &config = g_Config.GetTouchControlsConfig(g_display.GetDeviceOrientation());
++	const TouchControlConfig &config = g_Config.GetCurrentTouchControlsConfig(g_display.GetDeviceOrientation());
+ 	const float headScale = config.fRightStickHeadScale;
+ 	if (!config.bHideStickBackground)
+ 		dc.Draw()->DrawImage(bgImg_, stickX, stickY, 1.0f, colorBg, ALIGN_CENTER);
+@@ -626,7 +626,7 @@ bool PSPCustomStick::Touch(const TouchInput &input) {
+ 		return false;
+ 	}
+ 	if (input.flags & TouchInputFlags::DOWN) {
+-		const TouchControlConfig &config = g_Config.GetTouchControlsConfig(g_display.GetDeviceOrientation());
++		const TouchControlConfig &config = g_Config.GetCurrentTouchControlsConfig(g_display.GetDeviceOrientation());
+ 		float fac = 0.5f * config.fRightStickHeadScale - 0.5f;
+ 		if (dragPointerId_ == -1 && bounds_.Expand(bounds_.w*fac, bounds_.h*fac).Contains(input.x, input.y)) {
+ 			if (g_Config.bAutoCenterTouchAnalog) {
+diff --git a/UI/GamepadEmu.h b/UI/GamepadEmu.h
+--- a/UI/GamepadEmu.h
++++ b/UI/GamepadEmu.h
+@@ -362,6 +362,7 @@ namespace CustomKeyData {
+ 		{ ImageID::invalid(), VIRTKEY_TOGGLE_DEBUGGER },
+ 		{ ImageID::invalid(), VIRTKEY_PAUSE_NO_MENU },
+ 		{ ImageID::invalid(), VIRTKEY_TOGGLE_TILT },
++		{ ImageID::invalid(), VIRTKEY_SWAP_LAYOUT },
+ 		// IMPORTANT: Only add at the end!
+ 	};
+ 	static_assert(ARRAY_SIZE(g_customKeyList) <= 64, "Too many key for a uint64_t bit mask");
+diff --git a/UI/TouchControlLayoutScreen.cpp b/UI/TouchControlLayoutScreen.cpp
+--- a/UI/TouchControlLayoutScreen.cpp
++++ b/UI/TouchControlLayoutScreen.cpp
+@@ -475,7 +475,7 @@ void ControlLayoutView::CreateViews() {
+ 	}
+
+ 	// Create all the subviews.
+-	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(deviceOrientation_);
++	TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(deviceOrientation_);
+
+ 	if (touch.bShowTouchCircle || touch.bShowTouchCross || touch.bShowTouchTriangle || touch.bShowTouchSquare) {
+ 		PSPActionButtons *actionButtons = new PSPActionButtons(touch.touchActionButtonCenter, "Action buttons", touch.fActionButtonSpacing, bounds);
+@@ -592,7 +592,7 @@ void TouchControlLayoutScreen::OnReset(UI::EventParams &e) {
+
+ 	const Bounds &bounds = screenManager()->getUIContext()->GetBounds();
+ 	const DeviceOrientation orientation = GetDeviceOrientation();
+-	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(orientation);
++	TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(orientation);
+ 	touch.ResetLayout();
+ 	InitPadLayout(&touch, orientation, bounds.w, bounds.h);
+ 	RecreateViews();
+@@ -609,6 +609,21 @@ void TouchControlLayoutScreen::OnMode(UI::EventParams &e) {
+ 	}
+ }
+
++void TouchControlLayoutScreen::OnLayoutSelection(UI::EventParams &e) {
++	const DeviceOrientation orientation = GetDeviceOrientation();
++	int selection = e.a;
++	
++	int newSelection = selection + 1; // Convert from 0-based to 1-based
++	// Update both runtime and persisted selection when changed through the editor.
++	g_Config.iTouchLayoutSelection = newSelection;
++	g_Config.iTouchLayoutSelectionSaved = newSelection;
++	
++	// Reload the layout for the newly selected layout
++	const Bounds &bounds = screenManager()->getUIContext()->GetBounds();
++	InitPadLayout(&g_Config.GetCurrentTouchControlsConfig(orientation), orientation, bounds.w, bounds.h);
++	RecreateViews();
++}
++
+ void TouchControlLayoutScreen::update() {
+ 	UIBaseDialogScreen::update();
+
+@@ -637,7 +652,7 @@ void TouchControlLayoutScreen::CreateViews() {
+ 	// setup g_Config for button layout
+ 	const Bounds &bounds = screenManager()->getUIContext()->GetBounds();
+ 	const DeviceOrientation orientation = GetDeviceOrientation();
+-	InitPadLayout(&g_Config.GetTouchControlsConfig(orientation), orientation, bounds.w, bounds.h);
++	InitPadLayout(&g_Config.GetCurrentTouchControlsConfig(orientation), orientation, bounds.w, bounds.h);
+
+ 	// const bool portrait = GetDeviceOrientation() == DeviceOrientation::Portrait;
+
+@@ -661,6 +676,13 @@ void TouchControlLayoutScreen::CreateViews() {
+ 	mode_->SetSelection(0, false);
+ 	mode_->OnChoice.Handle(this, &TouchControlLayoutScreen::OnMode);
+
++	// Layout selection for swap layout feature
++	auto layoutSelectionStrip = new ChoiceStrip(ORIENT_VERTICAL);
++	layoutSelectionStrip->AddChoice("Layout 1");
++	layoutSelectionStrip->AddChoice("Layout 2");
++	layoutSelectionStrip->SetSelection(g_Config.iTouchLayoutSelection - 1, false);
++	layoutSelectionStrip->OnChoice.Handle(this, &TouchControlLayoutScreen::OnLayoutSelection);
++
+ 	CheckBox *snap = new CheckBox(&g_Config.bTouchSnapToGrid, di->T("Snap"));
+ 	PopupSliderChoice *gridSize = new PopupSliderChoice(&g_Config.iTouchSnapGridSize, 2, 256, 64, di->T("Grid"), screenManager(), "");
+ 	gridSize->SetEnabledPtr(&g_Config.bTouchSnapToGrid);
+@@ -669,6 +691,9 @@ void TouchControlLayoutScreen::CreateViews() {
+ 	leftColumn->Add(new Choice(co->T("Customize")))->OnClick.Add([this](UI::EventParams &e) {
+ 		screenManager()->push(new TouchControlVisibilityScreen(gamePath_));
+ 	});
++	leftColumn->Add(new Spacer(8.0f));
++	leftColumn->Add(new TextView(di->T("Layout:")))->SetTextSize(TextSize::Small);
++	leftColumn->Add(layoutSelectionStrip);
+ 	leftColumn->Add(snap);
+ 	leftColumn->Add(gridSize);
+ 	leftColumn->Add(new Choice(di->T("Reset")))->OnClick.Handle(this, &TouchControlLayoutScreen::OnReset);
+diff --git a/UI/TouchControlLayoutScreen.h b/UI/TouchControlLayoutScreen.h
+--- a/UI/TouchControlLayoutScreen.h
++++ b/UI/TouchControlLayoutScreen.h
+@@ -39,6 +39,8 @@ class TouchControlLayoutScreen : public UIBaseDialogScreen {
+ protected:
+ 	void OnReset(UI::EventParams &e);
+ 	void OnMode(UI::EventParams &e);
++	void OnLayoutSelection(UI::EventParams &e);
++
+
+ private:
+ 	UI::ChoiceStrip *mode_ = nullptr;
+diff --git a/UI/TouchControlVisibilityScreen.cpp b/UI/TouchControlVisibilityScreen.cpp
+--- a/UI/TouchControlVisibilityScreen.cpp
++++ b/UI/TouchControlVisibilityScreen.cpp
+@@ -80,7 +80,7 @@ void TouchControlVisibilityScreen::CreateDialogViews(UI::ViewGroup *parent) {
+ 	gridsettings.fillCells = true;
+ 	GridLayout *grid = parent->Add(new GridLayoutList(gridsettings, new LayoutParams(FILL_PARENT, WRAP_CONTENT)));
+
+-	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(GetDeviceOrientation());
++	TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(GetDeviceOrientation());
+
+ 	toggles_.clear();
+ 	toggles_.push_back({ "Circle", &touch.bShowTouchCircle, ImageID("I_CIRCLE"), nullptr });
+@@ -146,6 +146,30 @@ void TouchControlVisibilityScreen::CreateDialogViews(UI::ViewGroup *parent) {
+ }
+
+ void TouchControlVisibilityScreen::onFinish(DialogResult result) {
++	// Refresh current layout pointer and sync visibility settings
++	TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(GetDeviceOrientation());
++	for (size_t i = 0; i < toggles_.size(); i++) {
++		if (toggles_[i].show) {
++			bool val = *toggles_[i].show;
++			if (i == 0) touch.bShowTouchCircle = val;
++			else if (i == 1) touch.bShowTouchCross = val;
++			else if (i == 2) touch.bShowTouchSquare = val;
++			else if (i == 3) touch.bShowTouchTriangle = val;
++			else if (i == 4) touch.touchLKey.show = val;
++			else if (i == 5) touch.touchRKey.show = val;
++			else if (i == 6) touch.touchStartKey.show = val;
++			else if (i == 7) touch.touchSelectKey.show = val;
++			else if (i == 8) touch.touchDpad.show = val;
++			else if (i == 9) touch.touchAnalogStick.show = val;
++			else if (i == 10) touch.touchRightAnalogStick.show = val;
++			else if (i == 11) touch.touchFastForwardKey.show = val;
++			else if (i == 12) touch.touchPauseKey.show = val;
++			else if (i >= 13 && i < (size_t)(13 + TouchControlConfig::CUSTOM_BUTTON_COUNT)) {
++				int idx = i - 13;
++				touch.touchCustom[idx].show = val;
++			}
++		}
++	}
+ 	g_Config.Save("TouchControlVisibilityScreen::onFinish");
+ }
+
+@@ -161,7 +185,7 @@ void RightAnalogMappingScreen::CreateDialogViews(UI::ViewGroup *parent) {
+ 	auto co = GetI18NCategory(I18NCat::CONTROLS);
+ 	auto mc = GetI18NCategory(I18NCat::MAPPABLECONTROLS);
+
+-	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(GetDeviceOrientation());
++	TouchControlConfig &touch = g_Config.GetCurrentTouchControlsConfig(GetDeviceOrientation());
+
+ 	static const char *rightAnalogButton[] = {"None", "L", "R", "Square", "Triangle", "Circle", "Cross", "D-pad up", "D-pad down", "D-pad left", "D-pad right", "Start", "Select", "RightAn.Up", "RightAn.Down", "RightAn.Left", "RightAn.Right", "An.Up", "An.Down", "An.Left", "An.Right"};
+

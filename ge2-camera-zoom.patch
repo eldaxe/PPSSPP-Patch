@@ -1,0 +1,139 @@
+diff --git a/Core/Compatibility.cpp b/Core/Compatibility.cpp
+--- a/Core/Compatibility.cpp
++++ b/Core/Compatibility.cpp
+@@ -164,6 +164,8 @@ void Compatibility::CheckSettings(IniFile &iniFile, const std::string &gameID) {
+ 	CheckSetting(iniFile, gameID, "PersistentFramebuffers", &flags_.PersistentFramebuffers);
+ 	CheckSetting(iniFile, gameID, "FileCreatedTimeHack", &flags_.FileCreatedTimeHack);
+ 	CheckSetting(iniFile, gameID, "FastEmulatedGPU", &flags_.FastEmulatedGPU);
++	CheckSetting(iniFile, gameID, "ReduceBloomStrength", &flags_.ReduceBloomStrength);
++	CheckSetting(iniFile, gameID, "CameraZoomFactor", &flags_.CameraZoomFactor);
+ }
+
+ void Compatibility::CheckVRSettings(IniFile &iniFile, const std::string &gameID) {
+diff --git a/Core/Compatibility.h b/Core/Compatibility.h
+--- a/Core/Compatibility.h
++++ b/Core/Compatibility.h
+@@ -123,6 +123,8 @@ struct CompatFlags {
+ 	bool PersistentFramebuffers;
+ 	bool FileCreatedTimeHack;
+ 	bool FastEmulatedGPU;
++	bool ReduceBloomStrength;
++	int CameraZoomFactor;
+ };
+
+ struct VRCompat {
+diff --git a/Core/Config.cpp b/Core/Config.cpp
+--- a/Core/Config.cpp
++++ b/Core/Config.cpp
+@@ -812,6 +812,8 @@ static const ConfigSetting graphicsSettings[] = {
+ 	ConfigSetting("VerticalSync", SETTING(g_Config, bVSync), true, CfgFlag::PER_GAME),
+ 	ConfigSetting("LowLatencyPresent", SETTING(g_Config, bLowLatencyPresent), true, CfgFlag::PER_GAME),
+ 	ConfigSetting("BloomHack", SETTING(g_Config, iBloomHack), 0, CfgFlag::PER_GAME | CfgFlag::REPORT),
++	ConfigSetting("GE2BloomReductionPercent", SETTING(g_Config, iGE2BloomReductionPercent), 60, CfgFlag::PER_GAME | CfgFlag::REPORT),
++	ConfigSetting("GE2CameraZoomPercent", SETTING(g_Config, iGE2CameraZoomPercent), 100, CfgFlag::PER_GAME | CfgFlag::REPORT),
+
+ 	// Not really a graphics setting...
+ 	ConfigSetting("SplineBezierQuality", SETTING(g_Config, iSplineBezierQuality), 2, CfgFlag::PER_GAME | CfgFlag::REPORT),
+diff --git a/Core/Config.h b/Core/Config.h
+--- a/Core/Config.h
++++ b/Core/Config.h
+@@ -359,6 +359,8 @@ struct Config : public ConfigBlock {
+ 	float fHomebrewScrollPosition;
+ 	float fRemoteScrollPosition;
+ 	int iBloomHack; //0 = off, 1 = safe, 2 = balanced, 3 = aggressive
++	int iGE2BloomReductionPercent; // 0-100, reduces in-game bloom for God Eater 2 via compat flag
++	int iGE2CameraZoomPercent; // 50-200, multiplies GE2 camera zoom hack factor
+ 	int iSkipGPUReadbackMode;  // 0 = off, 1 = skip, 2 = to texture
+ 	int iSplineBezierQuality;  // 0 = low , 1 = Intermediate , 2 = High
+ 	bool bHardwareTessellation;
+diff --git a/GPU/Common/ShaderUniforms.cpp b/GPU/Common/ShaderUniforms.cpp
+--- a/GPU/Common/ShaderUniforms.cpp
++++ b/GPU/Common/ShaderUniforms.cpp
+@@ -7,6 +7,8 @@
+ #include "Common/Math/lin/matrix4x4.h"
+ #include "Common/Math/math_util.h"
+ #include "Common/Math/lin/vec3.h"
++#include "Core/Config.h"
++#include "Core/System.h"
+ #include "GPU/GPUState.h"
+ #include "GPU/Common/FramebufferManagerCommon.h"
+ #include "GPU/Common/GPUStateUtils.h"
+@@ -115,6 +117,22 @@ void BaseUpdateUniforms(UB_VS_FS_Base *ub, uint64_t dirtyUniforms, bool flipView
+ 		Matrix4x4 flippedMatrix;
+ 		memcpy(&flippedMatrix, gstate.projMatrix, 16 * sizeof(float));
+
++		// Per-game camera zoom hack for 3D only.
++		// 100 = neutral, >100 = zoom in, <100 = zoom out.
++		const bool perspectiveProjection = std::fabs(gstate.projMatrix[15]) < 0.5f;
++		if (!gstate.isModeThrough() && !gstate.isModeClear() && gstate.isDepthTestEnabled() && gstate.isDepthWriteEnabled() && perspectiveProjection) {
++			int cameraZoomFactor = PSP_CoreParameter().compat.flags().CameraZoomFactor;
++			if (cameraZoomFactor > 0) {
++				const int userZoomPercent = std::clamp(g_Config.iGE2CameraZoomPercent, 50, 200);
++				cameraZoomFactor = cameraZoomFactor * userZoomPercent / 100;
++				if (cameraZoomFactor != 100) {
++					const float zoomScale = (float)cameraZoomFactor * (1.0f / 100.0f);
++					flippedMatrix.xx *= zoomScale;
++					flippedMatrix.yy *= zoomScale;
++				}
++			}
++		}
++
+ 		const bool invertedY = gstate_c.vpHeight < 0;
+ 		if (invertedY) {
+ 			flippedMatrix[1] = -flippedMatrix[1];
+diff --git a/UI/GameSettingsScreen.cpp b/UI/GameSettingsScreen.cpp
+--- a/UI/GameSettingsScreen.cpp
++++ b/UI/GameSettingsScreen.cpp
+@@ -666,6 +666,20 @@ void GameSettingsScreen::CreateGraphicsSettings(UI::ViewGroup *graphicsSettings)
+ 		graphicsSettings->Add(new BitCheckBox(&g_Config.iShowStatusFlags, (int)ShowStatusFlags::BATTERY_PERCENT, gr->T("Show Battery %")));
+ 	}
+ 	AddOverlayList(graphicsSettings, screenManager());
++
++	graphicsSettings->Add(new ItemHeader(gr->T("Patch")));
++	PopupSliderChoice *ge2BloomReduction = graphicsSettings->Add(new PopupSliderChoice(&g_Config.iGE2BloomReductionPercent, 0, 100, 60, gr->T("God Eater 2 bloom reduction"), screenManager(), "%"));
++	ge2BloomReduction->SetFormat("%d%%");
++	ge2BloomReduction->SetLiveUpdate(true);
++	ge2BloomReduction->SetEnabledFunc([]() {
++		return PSP_CoreParameter().compat.flags().ReduceBloomStrength && !g_Config.bSkipBufferEffects;
++	});
++	PopupSliderChoice *ge2CameraZoom = graphicsSettings->Add(new PopupSliderChoice(&g_Config.iGE2CameraZoomPercent, 50, 200, 100, gr->T("God Eater 2 camera zoom"), screenManager(), "%"));
++	ge2CameraZoom->SetFormat("%d%%");
++	ge2CameraZoom->SetLiveUpdate(true);
++	ge2CameraZoom->SetEnabledFunc([]() {
++		return PSP_CoreParameter().compat.flags().CameraZoomFactor > 0;
++	});
+ }
+
+ void GameSettingsScreen::CreateAudioSettings(UI::ViewGroup *audioSettings) {
+diff --git a/assets/compat.ini b/assets/compat.ini
+--- a/assets/compat.ini
++++ b/assets/compat.ini
+@@ -250,8 +250,6 @@ NPJH50631 = true
+ # Let's also apply to Me & My Katamari, I don't recall why though?
+ ULUS10094 = true
+ ULES00339 = true
+-ULJS00033 = true
+-UCKS45022 = true
+ ULJS19009 = true
+ NPJH50141 = true
+
+@@ -1351,6 +1349,19 @@ NPJH50832 = true
+ ULJS19093 = true
+ NPJH50832 = true
+
++[ReduceBloomStrength]
++# God Eater 2 - Reduce bloom effect by 60%
++ULJS00597 = true
++NPJH50832 = true
++ULJS19093 = true
++
++[CameraZoomFactor]
++# God Eater 2 camera zoom hack.
++# 100 = neutral, >100 = zoom in, <100 = zoom out.
++ULJS00597 = 110
++NPJH50832 = 110
++ULJS19093 = 110
++
+ # God Eater Burst
+ ULJS00351 = true
+ NPJH50352 = true

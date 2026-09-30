@@ -1,0 +1,286 @@
+diff --git a/GPU/Common/FragmentShaderGenerator.cpp b/GPU/Common/FragmentShaderGenerator.cpp
+--- a/GPU/Common/FragmentShaderGenerator.cpp
++++ b/GPU/Common/FragmentShaderGenerator.cpp
+@@ -15,2 +15,4 @@
+-#include <cstdio>
+-#include <sstream>
++#include <cstdio>
++#include <cstring>
++#include <sstream>
++#include <bitset>
+@@ -30,5 +34,11 @@
+ #include "GPU/GPUState.h"
++
++#include "Common/File/FileUtil.h"
++#include "Core/Util/PathUtil.h"
+
+ #define WRITE(p, ...) p.F(__VA_ARGS__)
+
++// Legacy custom-GLSL export/override support from the old patch.
++#define __FRAGMENT_GLSL_FILE__
++
+ static const SamplerDef samplersMono[3] = {
+@@ -180,4 +180,75 @@
+ 	bool needFragCoord = readFramebufferTex || gstate_c.Use(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT);
+ 	bool writeDepth = (gstate_c.Use(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT) || fsDepthClamp) && !forceDepthWritesOff;
++
++	// Keep the historical Fragment_0x*.glsl IDs stable.
++	// Removed legacy fields stay at their old bit positions as zero.
++	enum LegacyFragmentFlag {
++		_LEGACY_HIGHP_FOG = 0,
++		_LEGACY_FRAGMENT_TEST_CACHE,
++		_LEGACY_TEXTURE_3D,
++		_LEGACY_LMODE,
++		_LEGACY_DO_TEXTURE,
++		_LEGACY_ENABLE_FOG,
++		_LEGACY_ALPHA_TEST,
++		_LEGACY_ALPHA_AGAINST_ZERO,
++		_LEGACY_TEST_FORCE_TO_ZERO,
++		_LEGACY_COLOR_TEST,
++		_LEGACY_COLOR_AGAINST_ZERO,
++		_LEGACY_COLOR_DOUBLE,
++		_LEGACY_TEXTURE_PROJECTION,
++		_LEGACY_TEXTURE_ALPHA,
++		_LEGACY_FLAT_BUG,
++		_LEGACY_FLAT_SHADING,
++		_LEGACY_SHADER_DEPAL,
++		_LEGACY_SMOOTHED_DEPAL,
++		_LEGACY_BGRA_TEXTURE,
++		_LEGACY_COLOR_WRITE_MASK,
++		_LEGACY_SHADER_TEX_CLAMP,
++		_LEGACY_BLUE_TO_ALPHA,
++		_LEGACY_CLEAR_MODE,
++		_LEGACY_DISCARD_STENCIL_WORKAROUND,
++		_LEGACY_READ_FRAMEBUFFER,
++		_LEGACY_READ_FRAMEBUFFER_TEX,
++		_LEGACY_FRAG_COORD,
++		_LEGACY_WRITE_DEPTH,
++	};
++
++	std::bitset<28> legacyFlags;
++	legacyFlags.set(_LEGACY_HIGHP_FOG, highpFog);
++	legacyFlags.set(_LEGACY_FRAGMENT_TEST_CACHE, enableFragmentTestCache);
++	legacyFlags.set(_LEGACY_TEXTURE_3D, texture3D);
++	legacyFlags.set(_LEGACY_LMODE, lmode);
++	legacyFlags.set(_LEGACY_DO_TEXTURE, doTexture);
++	legacyFlags.set(_LEGACY_ENABLE_FOG, enableFog);
++	legacyFlags.set(_LEGACY_ALPHA_TEST, enableAlphaTest);
++	legacyFlags.set(_LEGACY_ALPHA_AGAINST_ZERO, alphaTestAgainstZero);
++	legacyFlags.set(_LEGACY_TEST_FORCE_TO_ZERO, testForceToZero);
++	legacyFlags.set(_LEGACY_COLOR_TEST, enableColorTest);
++	legacyFlags.set(_LEGACY_COLOR_AGAINST_ZERO, colorTestAgainstZero);
++	legacyFlags.set(_LEGACY_COLOR_DOUBLE, false);       // removed
++	legacyFlags.set(_LEGACY_TEXTURE_PROJECTION, doTextureProjection);
++	legacyFlags.set(_LEGACY_TEXTURE_ALPHA, false);      // removed
++	legacyFlags.set(_LEGACY_FLAT_BUG, flatBug);
++	legacyFlags.set(_LEGACY_FLAT_SHADING, doFlatShading);
++	legacyFlags.set(_LEGACY_SHADER_DEPAL, shaderDepalMode != ShaderDepalMode::OFF);
++	legacyFlags.set(_LEGACY_SMOOTHED_DEPAL, false);     // removed
++	legacyFlags.set(_LEGACY_BGRA_TEXTURE, false);       // removed
++	legacyFlags.set(_LEGACY_COLOR_WRITE_MASK, colorWriteMask);
++	legacyFlags.set(_LEGACY_SHADER_TEX_CLAMP, needShaderTexClamp);
++	legacyFlags.set(_LEGACY_BLUE_TO_ALPHA, blueToAlpha);
++	legacyFlags.set(_LEGACY_CLEAR_MODE, isModeClear);
++	legacyFlags.set(_LEGACY_DISCARD_STENCIL_WORKAROUND, useDiscardStencilBugWorkaround);
++	legacyFlags.set(_LEGACY_READ_FRAMEBUFFER, needFramebufferRead);
++	legacyFlags.set(_LEGACY_READ_FRAMEBUFFER_TEX, readFramebufferTex);
++	legacyFlags.set(_LEGACY_FRAG_COORD, needFragCoord);
++	legacyFlags.set(_LEGACY_WRITE_DEPTH, writeDepth);
++	const unsigned long legacyFlagValue = legacyFlags.to_ulong();
++
++#ifdef __FRAGMENT_GLSL_FILE__
++	const Path customGLSLDir = GetSysDirectory(DIRECTORY_PSP) / "SHADERS" / "GLSL";
++	const std::string customGLSLName = StringFromFormat("Fragment_0x%lx.glsl", legacyFlagValue);
++	const Path customGLSLPath = customGLSLDir / customGLSLName;
++#endif
++
+
+ 	// TODO: We could have a separate mechanism to support more ops using the shader blending mechanism,
+@@ -366,5 +424,20 @@
+ 		if (fsMinmaxDiscard || fsDepthClamp) {
+ 			WRITE(p, "%s highp vec2 v_zw;\n", compat.varying_fs);
+ 		}
++
++		// Extra interface used by the legacy custom GLSL/PBR shader files.
++		// Unlike the old patch, declare these before main() so the generated
++		// shader itself remains valid GLSL.
++		if (compat.gles && (legacyFlagValue == 0x32 || legacyFlagValue == 0x2032)) {
++			WRITE(p, "%s %s lowp flat int flag;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_1;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_2;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_3;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_4;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_5;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_6;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_7;\n", shading, compat.varying_fs);
++			WRITE(p, "%s %s highp vec4 v_8;\n", shading, compat.varying_fs);
++		}
+
+ 		if (!enableFragmentTestCache) {
+@@ -1240,6 +1311,31 @@
+ 	}
+
+ 	WRITE(p, "}\n");
+
++#ifdef __FRAGMENT_GLSL_FILE__
++	if (compat.gles && ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
++		Path shaderPath = customGLSLPath;
++		// The old generator could produce 0x2032 because bit 13 (TEXALPHA)
++		// existed then. Modern PPSSPP no longer has that bit, so allow an
++		// existing legacy 0x2032 file to remain usable as an alias.
++		if (legacyFlagValue == 0x32) {
++			Path legacy2032 = customGLSLDir / "Fragment_0x2032.glsl";
++			std::string legacyCode;
++			if (File::ReadTextFileToString(legacy2032, &legacyCode) && !File::Exists(shaderPath))
++				shaderPath = legacy2032;
++		}
++		std::string customCode;
++		if (File::ReadTextFileToString(shaderPath, &customCode)) {
++			if (!customCode.empty() && customCode.size() < 16384) {
++				std::memcpy(buffer, customCode.data(), customCode.size());
++				buffer[customCode.size()] = '\0';
++			}
++		} else {
++			File::CreateFullPath(customGLSLDir);
++			File::WriteStringToFile(true, buffer, customGLSLPath);
++		}
++	}
++#endif
++
+ 	return true;
+ }
+diff --git a/GPU/Common/VertexShaderGenerator.cpp b/GPU/Common/VertexShaderGenerator.cpp
+--- a/GPU/Common/VertexShaderGenerator.cpp
++++ b/GPU/Common/VertexShaderGenerator.cpp
+@@ -17,4 +17,9 @@
+ // https://github.com/hrydgard/ppsspp and http://www.ppsspp.org/.
+
++#include <bitset>
++#include <cstring>
++
++#include "Common/File/FileUtil.h"
++#include "Core/Util/PathUtil.h"
+
+ #include "Common/StringUtils.h"
+@@ -30,4 +34,7 @@
+
+ #define WRITE(p, ...) p.F(__VA_ARGS__)
+
++// Legacy custom-GLSL export/override support from the old patch.
++#define __VERTEXT_GLSL_FILE__
++
+ // Depth range and viewport
+@@ -160,3 +160,73 @@
+ 	bool texCoordInVec3 = false;
++
++	// Keep the historical Vertex_0x*.glsl IDs stable.
++	// Removed bone/tessellation fields stay at their old bit positions as zero.
++	enum LegacyVertexFlag {
++		_LEGACY_HIGHP_FOG = 0,
++		_LEGACY_HIGHP_TEXCOORD,
++		_LEGACY_MODE_THROUGH,
++		_LEGACY_LMODE,
++		_LEGACY_DO_TEXTURE,
++		_LEGACY_TEXTURE_TRANSFORM,
++		_LEGACY_SHADE_MAPPING,
++		_LEGACY_FLAT_BUG,
++		_LEGACY_ZW_HACK,
++		_LEGACY_FLAT_SHADING,
++		_LEGACY_HW_TRANSFORM,
++		_LEGACY_HAS_COLOR,
++		_LEGACY_HAS_NORMAL,
++		_LEGACY_HAS_TEXCOORD,
++		_LEGACY_ENABLE_FOG,
++		_LEGACY_FLIP_NORMAL,
++		_LEGACY_ENABLE_BONES,
++		_LEGACY_ENABLE_LIGHTING,
++		_LEGACY_BEZIER,
++		_LEGACY_SPLINE,
++		_LEGACY_COLOR_TESS,
++		_LEGACY_TEXCOORD_TESS,
++		_LEGACY_NORMAL_TESS,
++		_LEGACY_FLIP_NORMAL_TESS,
++		_LEGACY_TEXCOORD_VEC3,
++		_LEGACY_VERTEX_RANGE_CULLING,
++	};
++
++	std::bitset<26> legacyFlags;
++	legacyFlags.set(_LEGACY_HIGHP_FOG, highpFog);
++	legacyFlags.set(_LEGACY_HIGHP_TEXCOORD, highpTexcoord);
++	legacyFlags.set(_LEGACY_MODE_THROUGH, isModeThrough);
++	legacyFlags.set(_LEGACY_LMODE, lmode);
++	// Modern VertexShaderGenerator no longer has a separate doTexture bit.
++	// hasTexcoord preserves the old ID for the existing custom shader cases.
++	legacyFlags.set(_LEGACY_DO_TEXTURE, hasTexcoord);
++	legacyFlags.set(_LEGACY_TEXTURE_TRANSFORM, doTextureTransform);
++	legacyFlags.set(_LEGACY_SHADE_MAPPING, doShadeMapping);
++	legacyFlags.set(_LEGACY_FLAT_BUG, flatBug);
++	legacyFlags.set(_LEGACY_ZW_HACK, fsMinmaxDiscard || fsDepthClamp);
++	legacyFlags.set(_LEGACY_FLAT_SHADING, doFlatShading);
++	legacyFlags.set(_LEGACY_HW_TRANSFORM, useHWTransform);
++	legacyFlags.set(_LEGACY_HAS_COLOR, hasColor);
++	legacyFlags.set(_LEGACY_HAS_NORMAL, hasNormal);
++	legacyFlags.set(_LEGACY_HAS_TEXCOORD, hasTexcoord);
++	// Modern PPSSPP always forwards fog depth; preserve the historical bit.
++	legacyFlags.set(_LEGACY_ENABLE_FOG, true);
++	legacyFlags.set(_LEGACY_FLIP_NORMAL, flipNormal);
++	legacyFlags.set(_LEGACY_ENABLE_BONES, false);       // removed
++	legacyFlags.set(_LEGACY_ENABLE_LIGHTING, enableLighting);
++	legacyFlags.set(_LEGACY_BEZIER, false);              // removed
++	legacyFlags.set(_LEGACY_SPLINE, false);              // removed
++	legacyFlags.set(_LEGACY_COLOR_TESS, false);         // removed
++	legacyFlags.set(_LEGACY_TEXCOORD_TESS, false);      // removed
++	legacyFlags.set(_LEGACY_NORMAL_TESS, false);        // removed
++	legacyFlags.set(_LEGACY_FLIP_NORMAL_TESS, false);   // removed
++	legacyFlags.set(_LEGACY_TEXCOORD_VEC3, texCoordInVec3);
++	legacyFlags.set(_LEGACY_VERTEX_RANGE_CULLING, rangeCulling);
++	const unsigned long legacyFlagValue = legacyFlags.to_ulong();
++
++#ifdef __VERTEXT_GLSL_FILE__
++	const Path customGLSLDir = GetSysDirectory(DIRECTORY_PSP) / "SHADERS" / "GLSL";
++	const std::string customGLSLName = StringFromFormat("Vertex_0x%lx.glsl", legacyFlagValue);
++	const Path customGLSLPath = customGLSLDir / customGLSLName;
++#endif
++
+
+ 	const char *minZClipPlaneSuffix = "[0]";
+@@ -397,4 +465,17 @@
+ 		if (fsMinmaxDiscard || fsDepthClamp) {
+ 			WRITE(p, "%s highp vec2 v_zw;\n", compat.varying_vs);
+ 		}
++
++		// Extra interface used by the legacy custom GLSL/PBR shader files.
++		if (compat.gles && (legacyFlagValue == 0x2027410 || legacyFlagValue == 0x2006410)) {
++			WRITE(p, "%s lowp flat int flag;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_1;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_2;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_3;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_4;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_5;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_6;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_7;\n", compat.varying_vs);
++			WRITE(p, "%s highp vec4 v_8;\n", compat.varying_vs);
++		}
+ 	}
+@@ -966,6 +1044,21 @@
+ 	if (compat.shaderLanguage == HLSL_D3D11) {
+ 		WRITE(p, "  return Out;\n");
+ 	}
+ 	WRITE(p, "}\n");
++
++#ifdef __VERTEXT_GLSL_FILE__
++	if (compat.gles && ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
++		std::string customCode;
++		if (File::ReadTextFileToString(customGLSLPath, &customCode)) {
++			if (!customCode.empty() && customCode.size() < 16384) {
++				std::memcpy(buffer, customCode.data(), customCode.size());
++				buffer[customCode.size()] = '\0';
++			}
++		} else {
++			File::CreateFullPath(customGLSLDir);
++			File::WriteStringToFile(true, buffer, customGLSLPath);
++		}
++	}
++#endif
+ 	return true;
+ }

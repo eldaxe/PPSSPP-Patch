@@ -1,0 +1,403 @@
+       - name: Assemble APK
+         run: ./gradlew assemble${{ github.event.inputs.buildVariant }} --stacktrace
+
+diff --git a/Core/Config.cpp b/Core/Config.cpp
+--- a/Core/Config.cpp
++++ b/Core/Config.cpp
+@@ -993,6 +993,86 @@ static const ConfigSetting controlSettings[] = {
+ 	ConfigSetting("Custom17Mapping", "Custom17Image", "Custom17Shape", "Custom17Toggle", "Custom17Repeat", SETTING_IDX(g_Config, CustomButton, 17), {0, 2, 9, false, false}, CfgFlag::PER_GAME),
+ 	ConfigSetting("Custom18Mapping", "Custom18Image", "Custom18Shape", "Custom18Toggle", "Custom18Repeat", SETTING_IDX(g_Config, CustomButton, 18), {0, 3, 9, false, false}, CfgFlag::PER_GAME),
+ 	ConfigSetting("Custom19Mapping", "Custom19Image", "Custom19Shape", "Custom19Toggle", "Custom19Repeat", SETTING_IDX(g_Config, CustomButton, 19), {0, 4, 9, false, false}, CfgFlag::PER_GAME),
++	ConfigSetting("Custom0Summary", SETTING(g_Config, bCustomButtonSummary[0]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom1Summary", SETTING(g_Config, bCustomButtonSummary[1]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom2Summary", SETTING(g_Config, bCustomButtonSummary[2]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom3Summary", SETTING(g_Config, bCustomButtonSummary[3]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom4Summary", SETTING(g_Config, bCustomButtonSummary[4]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom5Summary", SETTING(g_Config, bCustomButtonSummary[5]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom6Summary", SETTING(g_Config, bCustomButtonSummary[6]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom7Summary", SETTING(g_Config, bCustomButtonSummary[7]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom8Summary", SETTING(g_Config, bCustomButtonSummary[8]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom9Summary", SETTING(g_Config, bCustomButtonSummary[9]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom10Summary", SETTING(g_Config, bCustomButtonSummary[10]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom11Summary", SETTING(g_Config, bCustomButtonSummary[11]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom12Summary", SETTING(g_Config, bCustomButtonSummary[12]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom13Summary", SETTING(g_Config, bCustomButtonSummary[13]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom14Summary", SETTING(g_Config, bCustomButtonSummary[14]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom15Summary", SETTING(g_Config, bCustomButtonSummary[15]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom16Summary", SETTING(g_Config, bCustomButtonSummary[16]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom17Summary", SETTING(g_Config, bCustomButtonSummary[17]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom18Summary", SETTING(g_Config, bCustomButtonSummary[18]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom19Summary", SETTING(g_Config, bCustomButtonSummary[19]), false, CfgFlag::PER_GAME),
++	ConfigSetting("Custom0SummaryText", SETTING(g_Config, sCustomButtonSummaryText[0]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom1SummaryText", SETTING(g_Config, sCustomButtonSummaryText[1]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom2SummaryText", SETTING(g_Config, sCustomButtonSummaryText[2]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom3SummaryText", SETTING(g_Config, sCustomButtonSummaryText[3]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom4SummaryText", SETTING(g_Config, sCustomButtonSummaryText[4]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom5SummaryText", SETTING(g_Config, sCustomButtonSummaryText[5]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom6SummaryText", SETTING(g_Config, sCustomButtonSummaryText[6]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom7SummaryText", SETTING(g_Config, sCustomButtonSummaryText[7]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom8SummaryText", SETTING(g_Config, sCustomButtonSummaryText[8]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom9SummaryText", SETTING(g_Config, sCustomButtonSummaryText[9]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom10SummaryText", SETTING(g_Config, sCustomButtonSummaryText[10]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom11SummaryText", SETTING(g_Config, sCustomButtonSummaryText[11]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom12SummaryText", SETTING(g_Config, sCustomButtonSummaryText[12]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom13SummaryText", SETTING(g_Config, sCustomButtonSummaryText[13]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom14SummaryText", SETTING(g_Config, sCustomButtonSummaryText[14]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom15SummaryText", SETTING(g_Config, sCustomButtonSummaryText[15]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom16SummaryText", SETTING(g_Config, sCustomButtonSummaryText[16]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom17SummaryText", SETTING(g_Config, sCustomButtonSummaryText[17]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom18SummaryText", SETTING(g_Config, sCustomButtonSummaryText[18]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom19SummaryText", SETTING(g_Config, sCustomButtonSummaryText[19]), "", CfgFlag::PER_GAME),
++	ConfigSetting("Custom0SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[0]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom1SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[1]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom2SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[2]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom3SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[3]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom4SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[4]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom5SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[5]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom6SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[6]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom7SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[7]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom8SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[8]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom9SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[9]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom10SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[10]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom11SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[11]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom12SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[12]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom13SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[13]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom14SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[14]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom15SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[15]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom16SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[16]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom17SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[17]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom18SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[18]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom19SummaryPos", SETTING(g_Config, iCustomButtonSummaryPosition[19]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom0SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[0]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom1SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[1]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom2SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[2]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom3SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[3]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom4SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[4]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom5SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[5]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom6SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[6]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom7SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[7]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom8SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[8]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom9SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[9]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom10SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[10]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom11SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[11]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom12SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[12]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom13SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[13]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom14SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[14]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom15SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[15]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom16SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[16]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom17SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[17]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom18SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[18]), 0, CfgFlag::PER_GAME),
++	ConfigSetting("Custom19SummaryMargin", SETTING(g_Config, iCustomButtonSummaryMargin[19]), 0, CfgFlag::PER_GAME),
+
+ 	ConfigSetting("TiltBaseAngleY", SETTING(g_Config, fTiltBaseAngleY), 0.9f, CfgFlag::PER_GAME),
+ 	ConfigSetting("TiltInvertX", SETTING(g_Config, bInvertTiltX), false, CfgFlag::PER_GAME),
+
+diff --git a/Core/Config.h b/Core/Config.h
+--- a/Core/Config.h
++++ b/Core/Config.h
+@@ -500,6 +500,10 @@ struct Config : public ConfigBlock {
+
+ 	// These are shared between portrait and landscape, just the positions aren't.
+ 	ConfigCustomButton CustomButton[TouchControlConfig::CUSTOM_BUTTON_COUNT];
++	bool bCustomButtonSummary[TouchControlConfig::CUSTOM_BUTTON_COUNT]{};
++	std::string sCustomButtonSummaryText[TouchControlConfig::CUSTOM_BUTTON_COUNT];
++	int iCustomButtonSummaryPosition[TouchControlConfig::CUSTOM_BUTTON_COUNT]{};
++	int iCustomButtonSummaryMargin[TouchControlConfig::CUSTOM_BUTTON_COUNT]{};
+
+ 	// Ignored on iOS and other platforms that lack pause.
+ 	bool bShowTouchPause;
+
+diff --git a/UI/CustomButtonMappingScreen.cpp b/UI/CustomButtonMappingScreen.cpp
+--- a/UI/CustomButtonMappingScreen.cpp
++++ b/UI/CustomButtonMappingScreen.cpp
+@@ -132,12 +132,22 @@ void CustomButtonMappingScreen::CreateDialogViews(UI::ViewGroup *parent) {
+ 	auto di = GetI18NCategory(I18NCat::DIALOG);
+
+ 	TouchControlConfig &touch = g_Config.GetTouchControlsConfig(deviceOrientation_);
++	static const char *summaryPositionLabels[] = { "Center", "Left", "Down", "Right", "Up" };
++	static const char *summaryMarginLabels[] = { "None", "Small", "Medium", "High" };
+
+ 	ConfigCustomButton *cfg = nullptr;
+ 	bool *show = nullptr;
++	bool *summaryShow = nullptr;
++	std::string *summaryText = nullptr;
++	int *summaryPosition = nullptr;
++	int *summaryMargin = nullptr;
+ 	memset(array, 0, sizeof(array));
+ 	cfg = &g_Config.CustomButton[id_];
+ 	show = &touch.touchCustom[id_].show;
++	summaryShow = &g_Config.bCustomButtonSummary[id_];
++	summaryText = &g_Config.sCustomButtonSummaryText[id_];
++	summaryPosition = &g_Config.iCustomButtonSummaryPosition[id_];
++	summaryMargin = &g_Config.iCustomButtonSummaryMargin[id_];
+ 	for (int i = 0; i < ARRAY_SIZE(g_customKeyList); i++)
+ 		array[i] = (0x01 == ((g_Config.CustomButton[id_].key >> i) & 0x01));
+
+@@ -156,6 +166,7 @@ void CustomButtonMappingScreen::CreateDialogViews(UI::ViewGroup *parent) {
+
+ 	vertLayout->Add(new ItemHeader(co->T("Button style")));
+ 	vertLayout->Add(new CheckBox(show, co->T("Visible")));
++	vertLayout->Add(new CheckBox(summaryShow, co->T("Summary")));
+
+ 	Choice *icon = vertLayout->Add(new Choice(co->T("Icon")));
+ 	icon->SetIconRight(ImageID(customKeyImages[cfg->image].i), 1.0f, customKeyImages[cfg->image].r*PI/180, false, false); // Set right icon on the choice
+@@ -177,6 +188,14 @@ void CustomButtonMappingScreen::CreateDialogViews(UI::ViewGroup *parent) {
+ 		screenManager()->push(shape);
+ 	});
+
++	vertLayout->Add(new PopupTextInputChoice(GetRequesterToken(), summaryText, co->T("Summary text"), co->T("Summary text"), 48, screenManager()));
++	PopupMultiChoice *summaryPos = vertLayout->Add(new PopupMultiChoice(summaryPosition, co->T("Summary position"), summaryPositionLabels, 0, ARRAY_SIZE(summaryPositionLabels), I18NCat::CONTROLS, screenManager()));
++	summaryPos->SetEnabledPtr(summaryShow);
++	PopupMultiChoice *summaryMarginChoice = vertLayout->Add(new PopupMultiChoice(summaryMargin, co->T("Summary margin"), summaryMarginLabels, 0, ARRAY_SIZE(summaryMarginLabels), I18NCat::CONTROLS, screenManager()));
++	summaryMarginChoice->SetEnabledFunc([summaryShow, summaryPosition]() {
++		return *summaryShow && *summaryPosition != 0;
++	});
++
+ 	vertLayout->Add(new ItemHeader(co->T("Button Binding")));
+ 	vertLayout->Add(new CheckBox(&(cfg->toggle), co->T("Toggle mode")));
+ 	vertLayout->Add(new CheckBox(&(cfg->repeat), co->T("Repeat mode")));
+
+diff --git a/UI/GamepadEmu.cpp b/UI/GamepadEmu.cpp
+--- a/UI/GamepadEmu.cpp
++++ b/UI/GamepadEmu.cpp
+@@ -326,6 +326,50 @@ void CustomButton::Update() {
+ 	}
+ }
+
++std::string CustomButton::DescribeText() const {
++	if (summaryShow_ && !summaryText_.empty()) {
++		return summaryText_;
++	}
++	return GamepadComponent::DescribeText();
++}
++
++void CustomButton::Draw(UIContext &dc) {
++	MultiTouchButton::Draw(dc);
++
++	if (!summaryShow_ || summaryText_.empty()) {
++		return;
++	}
++
++	float opacity = g_gamepadOpacity;
++	if (opacity <= 0.0f) {
++		return;
++	}
++
++	static constexpr float marginSizes[] = { 0.0f, 6.0f, 12.0f, 20.0f };
++	const int position = std::clamp(summaryPosition_, 0, 4);
++	const int margin = std::clamp(summaryMargin_, 0, 3);
++	const float offset = marginSizes[margin] * scale_;
++	const uint32_t textColor = colorAlpha(0xFFFFFF, std::max(opacity, 0.6f));
++
++	switch (position) {
++	case 0:
++		dc.DrawTextShadow(summaryText_, bounds_.centerX(), bounds_.centerY(), textColor, ALIGN_HCENTER | ALIGN_VCENTER | FLAG_WRAP_TEXT);
++		break;
++	case 1:
++		dc.DrawTextShadow(summaryText_, bounds_.x - offset, bounds_.centerY(), textColor, ALIGN_RIGHT | ALIGN_VCENTER | FLAG_WRAP_TEXT);
++		break;
++	case 2:
++		dc.DrawTextShadow(summaryText_, bounds_.centerX(), bounds_.y2() + offset, textColor, ALIGN_HCENTER | ALIGN_TOP | FLAG_WRAP_TEXT);
++		break;
++	case 3:
++		dc.DrawTextShadow(summaryText_, bounds_.x2() + offset, bounds_.centerY(), textColor, ALIGN_LEFT | ALIGN_VCENTER | FLAG_WRAP_TEXT);
++		break;
++	case 4:
++		dc.DrawTextShadow(summaryText_, bounds_.centerX(), bounds_.y - offset, textColor, ALIGN_HCENTER | ALIGN_BOTTOM | FLAG_WRAP_TEXT);
++		break;
++	}
++}
++
+ bool PSPButton::IsDownVisually() const {
+ 	return (__CtrlPeekButtonsVisual() & pspButtonBit_) != 0;
+ }
+@@ -1018,14 +1062,14 @@ GamepadEmuView::GamepadEmuView(const TouchControlConfig &config, float xres, flo
+ 		}
+ 		return nullptr;
+ 	};
+-	auto addCustomButton = [this, buttonLayoutParams, controlMapper](const ConfigCustomButton& cfg, const char *key, const ConfigTouchPos &touch) -> CustomButton * {
++	auto addCustomButton = [this, buttonLayoutParams, controlMapper](const ConfigCustomButton& cfg, bool summaryShow, const std::string &summaryText, int summaryPosition, int summaryMargin, const char *key, const ConfigTouchPos &touch) -> CustomButton * {
+ 		using namespace CustomKeyData;
+ 		if (touch.show) {
+ 			_dbg_assert_(cfg.shape < ARRAY_SIZE(customKeyShapes));
+ 			_dbg_assert_(cfg.image < ARRAY_SIZE(customKeyImages));
+
+ 			// Note: cfg.shape and cfg.image are bounds-checked elsewhere.
+-			auto aux = Add(new CustomButton(cfg.key, key, cfg.toggle, cfg.repeat, controlMapper,
++			auto aux = Add(new CustomButton(cfg.key, key, cfg.toggle, cfg.repeat, summaryShow, summaryText, summaryPosition, summaryMargin, controlMapper,
+ 					g_Config.iTouchButtonStyle == 0 ? customKeyShapes[cfg.shape].i : customKeyShapes[cfg.shape].l, customKeyShapes[cfg.shape].i,
+ 					customKeyImages[cfg.image].i, touch.scale, customKeyShapes[cfg.shape].d, buttonLayoutParams(touch)));
+ 			aux->SetAngle(customKeyImages[cfg.image].r, customKeyShapes[cfg.shape].r);
+@@ -1096,7 +1140,7 @@ GamepadEmuView::GamepadEmuView(const TouchControlConfig &config, float xres, flo
+
+ 		char temp[64];
+ 		snprintf(temp, sizeof(temp), "Custom %d button", i + 1);
+-		addCustomButton(g_Config.CustomButton[i], temp, config.touchCustom[i]);
++		addCustomButton(g_Config.CustomButton[i], g_Config.bCustomButtonSummary[i], g_Config.sCustomButtonSummaryText[i], g_Config.iCustomButtonSummaryPosition[i], g_Config.iCustomButtonSummaryMargin[i], temp, config.touchCustom[i]);
+ 	}
+
+ 	// Add the two gesture zones.
+
+diff --git a/UI/GamepadEmu.h b/UI/GamepadEmu.h
+--- a/UI/GamepadEmu.h
++++ b/UI/GamepadEmu.h
+@@ -186,11 +186,13 @@ const int baseActionButtonSpacing = 60;
+ // Customizable buttons, press a combination of buttons specified by pspButtonBit.
+ class CustomButton : public MultiTouchButton {
+ public:
+-	CustomButton(uint64_t pspButtonBit, std::string_view key, bool toggle, bool repeat, ControlMapper* controllMapper, ImageID bgImg, ImageID bgDownImg, ImageID img, float scale, bool invertedContentDimension, UI::LayoutParams *layoutParams)
+-		: MultiTouchButton(key, bgImg, bgDownImg, img, scale, layoutParams), pspButtonBit_(pspButtonBit), toggle_(toggle), repeat_(repeat), controlMapper_(controllMapper), on_(false), invertedContentDimension_(invertedContentDimension) {
++	CustomButton(uint64_t pspButtonBit, std::string_view key, bool toggle, bool repeat, bool summaryShow, std::string_view summaryText, int summaryPosition, int summaryMargin, ControlMapper* controllMapper, ImageID bgImg, ImageID bgDownImg, ImageID img, float scale, bool invertedContentDimension, UI::LayoutParams *layoutParams)
++		: MultiTouchButton(key, bgImg, bgDownImg, img, scale, layoutParams), pspButtonBit_(pspButtonBit), toggle_(toggle), repeat_(repeat), controlMapper_(controllMapper), on_(false), invertedContentDimension_(invertedContentDimension), summaryShow_(summaryShow), summaryText_(summaryText), summaryPosition_(summaryPosition), summaryMargin_(summaryMargin) {
+ 	}
+ 	bool Touch(const TouchInput &input) override;
+ 	void Update() override;
++	void Draw(UIContext &dc) override;
++	std::string DescribeText() const override;
+
+ 	bool IsDownVisually() const override;  // For visual purpose
+ 	bool IsDownByTouch() const override;
+@@ -204,6 +206,10 @@ class CustomButton : public MultiTouchButton {
+ 	ControlMapper* controlMapper_;
+ 	bool on_;
+ 	bool invertedContentDimension_; // Swap width and height
++	bool summaryShow_;
++	std::string summaryText_;
++	int summaryPosition_;
++	int summaryMargin_;
+ };
+
+ struct GestureControlConfig;
+
+diff --git a/UI/TouchControlLayoutScreen.cpp b/UI/TouchControlLayoutScreen.cpp
+--- a/UI/TouchControlLayoutScreen.cpp
++++ b/UI/TouchControlLayoutScreen.cpp
+@@ -43,9 +43,10 @@ static u32 GetButtonColor() {
+
+ class DragDropButton : public MultiTouchButton {
+ public:
+-	DragDropButton(ConfigTouchPos &pos, const char *key, ImageID bgImg, ImageID img, const Bounds &screenBounds)
++	DragDropButton(ConfigTouchPos &pos, const char *key, ImageID bgImg, ImageID img, const Bounds &screenBounds,
++		bool summaryShow = false, std::string summaryText = {}, int summaryPosition = 0, int summaryMargin = 0)
+ 	: MultiTouchButton(key, bgImg, bgImg, img, pos.scale, new UI::AnchorLayoutParams(pos.x * screenBounds.w, pos.y * screenBounds.h, UI::NONE, UI::NONE, UI::Centering::Both)),
+-		x_(pos.x), y_(pos.y), theScale_(pos.scale), screenBounds_(screenBounds) {
++		x_(pos.x), y_(pos.y), theScale_(pos.scale), screenBounds_(screenBounds), summaryShow_(summaryShow), summaryText_(std::move(summaryText)), summaryPosition_(summaryPosition), summaryMargin_(summaryMargin) {
+ 		scale_ = theScale_;
+ 	}
+
+@@ -59,6 +60,33 @@ class DragDropButton : public MultiTouchButton {
+ 	void Draw(UIContext &dc) override {
+ 		scale_ = theScale_*layoutAreaScale; // Scale down just for rendering
+ 		MultiTouchButton::Draw(dc);
++
++		if (summaryShow_ && !summaryText_.empty()) {
++			static constexpr float marginSizes[] = { 0.0f, 6.0f, 12.0f, 20.0f };
++			const int position = std::clamp(summaryPosition_, 0, 4);
++			const int margin = std::clamp(summaryMargin_, 0, 3);
++			const float offset = marginSizes[margin] * scale_;
++			const uint32_t textColor = colorAlpha(0xFFFFFF, std::max(GamepadGetOpacity(), 0.6f));
++
++			switch (position) {
++			case 0:
++				dc.DrawTextShadow(summaryText_, bounds_.centerX(), bounds_.centerY(), textColor, ALIGN_HCENTER | ALIGN_VCENTER | FLAG_WRAP_TEXT);
++				break;
++			case 1:
++				dc.DrawTextShadow(summaryText_, bounds_.x - offset, bounds_.centerY(), textColor, ALIGN_RIGHT | ALIGN_VCENTER | FLAG_WRAP_TEXT);
++				break;
++			case 2:
++				dc.DrawTextShadow(summaryText_, bounds_.centerX(), bounds_.y2() + offset, textColor, ALIGN_HCENTER | ALIGN_TOP | FLAG_WRAP_TEXT);
++				break;
++			case 3:
++				dc.DrawTextShadow(summaryText_, bounds_.x2() + offset, bounds_.centerY(), textColor, ALIGN_LEFT | ALIGN_VCENTER | FLAG_WRAP_TEXT);
++				break;
++			case 4:
++				dc.DrawTextShadow(summaryText_, bounds_.centerX(), bounds_.y - offset, textColor, ALIGN_HCENTER | ALIGN_BOTTOM | FLAG_WRAP_TEXT);
++				break;
++			}
++		}
++
+ 		scale_ = theScale_/layoutAreaScale; // is this is needed?
+ 	}
+
+@@ -87,6 +115,10 @@ class DragDropButton : public MultiTouchButton {
+ 	const Bounds &screenBounds_;
+ 	float &theScale_;
+ 	float &x_, &y_;
++	bool summaryShow_;
++	std::string summaryText_;
++	int summaryPosition_;
++	int summaryMargin_;
+ };
+
+ class PSPActionButtons : public DragDropButton {
+@@ -523,10 +555,11 @@ void ControlLayoutView::CreateViews() {
+ 		controls_.push_back(new PSPStickDragDrop(touch.touchRightAnalogStick, "Right analog stick", stickBg, stickImage, bounds, touch.fRightStickHeadScale));
+ 	}
+
+-	auto addDragCustomKey = [&](ConfigTouchPos &pos, const char *key, const ConfigCustomButton& cfg) {
++	auto addDragCustomKey = [&](ConfigTouchPos &pos, const char *key, const ConfigCustomButton& cfg, bool summaryShow, const std::string &summaryText, int summaryPosition, int summaryMargin) {
+ 		DragDropButton *b = nullptr;
+ 		if (pos.show) {
+-			b = new DragDropButton(pos, key, g_Config.iTouchButtonStyle == 0 ? customKeyShapes[cfg.shape].i : customKeyShapes[cfg.shape].l, customKeyImages[cfg.image].i, bounds);
++			b = new DragDropButton(pos, key, g_Config.iTouchButtonStyle == 0 ? customKeyShapes[cfg.shape].i : customKeyShapes[cfg.shape].l, customKeyImages[cfg.image].i, bounds,
++				summaryShow, summaryText, summaryPosition, summaryMargin);
+ 			b->FlipImageH(customKeyShapes[cfg.shape].f);
+ 			b->SetAngle(customKeyImages[cfg.shape].r, customKeyShapes[cfg.shape].r);
+ 			controls_.push_back(b);
+@@ -545,7 +578,7 @@ void ControlLayoutView::CreateViews() {
+
+ 		char temp[64];
+ 		snprintf(temp, sizeof(temp), "Custom %d button", i);
+-		addDragCustomKey(touch.touchCustom[i], temp, g_Config.CustomButton[i]);
++		addDragCustomKey(touch.touchCustom[i], temp, g_Config.CustomButton[i], g_Config.bCustomButtonSummary[i], g_Config.sCustomButtonSummaryText[i], g_Config.iCustomButtonSummaryPosition[i], g_Config.iCustomButtonSummaryMargin[i]);
+ 	}
+
+ 	for (size_t i = 0; i < controls_.size(); i++) {
+
+diff --git a/assets/lang/en_US.ini b/assets/lang/en_US.ini
+--- a/assets/lang/en_US.ini
++++ b/assets/lang/en_US.ini
+@@ -196,6 +196,19 @@ Screen Rotation = Screen rotation
+ Sensitivity = Sensitivity
+ Sensitivity (scale) = Sensitivity (scale)
+ Shape = Shape
++Summary = Summary
++Summary text = Summary text
++Summary position = Summary position
++Summary margin = Summary margin
++Center = Center
++Left = Left
++Down = Down
++Right = Right
++Up = Up
++None = None
++Small = Small
++Medium = Medium
++High = High
+ Sticky D-Pad = Sticky D-Pad
+ Swipe = Swipe
+ Swipe sensitivity = Swipe sensitivity
+
+diff --git a/assets/lang/id_ID.ini b/assets/lang/id_ID.ini
+--- a/assets/lang/id_ID.ini
++++ b/assets/lang/id_ID.ini
+@@ -173,6 +173,19 @@ Screen Rotation = Rotasi layar
+ Sensitivity (scale) = Sensitivitas (skala)
+ Sensitivity = Sensitivitas
+ Shape = Bentuk
++Summary = Ringkasan
++Summary text = Teks ringkasan
++Summary position = Posisi ringkasan
++Summary margin = Jarak ringkasan
++Center = Tengah
++Left = Kiri
++Down = Bawah
++Right = Kanan
++Up = Atas
++None = Tidak ada
++Small = Kecil
++Medium = Sedang
++High = Tinggi
+ Sticky D-Pad = Sticky D-Pad
+ Swipe = Geser
+ Swipe sensitivity = Sensitivitas gerakan geser
