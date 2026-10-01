@@ -1,0 +1,1770 @@
+diff -Naur ogppsspp/FragmentShaderGenerator.cpp zydppsspp/FragmentShaderGenerator.cpp
+--- ogppsspp/FragmentShaderGenerator.cpp	2022-12-18 13:22:16.538792253 +0800
++++ zydppsspp/FragmentShaderGenerator.cpp	2022-12-18 13:12:07.764384692 +0800
+@@ -23,397 +23,514 @@
+ #include "Common/GPU/OpenGL/GLFeatures.h"
+ #include "Common/GPU/ShaderWriter.h"
+ #include "Common/GPU/thin3d.h"
++#include "Core/Compatibility.h"
+ #include "Core/Reporting.h"
+ #include "Core/Config.h"
++#include "Core/System.h"
+ #include "GPU/Common/GPUStateUtils.h"
+ #include "GPU/Common/ShaderId.h"
+ #include "GPU/Common/ShaderUniforms.h"
+ #include "GPU/Common/FragmentShaderGenerator.h"
+ #include "GPU/ge_constants.h"
+ #include "GPU/GPUState.h"
+-
+ #define WRITE(p, ...) p.F(__VA_ARGS__)
++#include <bitset>
++#include <fstream>
+ 
++#define __FRAGMENT_GLSL_FILE__
++#define NORMAL_TEXTURE
++//#define EXTEND_TEXTURE
+ bool GenerateFragmentShader(const FShaderID &id, char *buffer, const ShaderLanguageDesc &compat, Draw::Bugs bugs, uint64_t *uniformMask, std::string *errorString) {
+-	*uniformMask = 0;
+-	errorString->clear();
+-
+-	bool highpFog = false;
+-	bool highpTexcoord = false;
+-	bool enableFragmentTestCache = g_Config.bFragmentTestCache && ShaderLanguageIsOpenGL(compat.shaderLanguage);
+-
+-	if (compat.gles) {
+-		// PowerVR needs highp to do the fog in MHU correctly.
+-		// Others don't, and some can't handle highp in the fragment shader.
+-		highpFog = (gl_extensions.bugs & BUG_PVR_SHADER_PRECISION_BAD) ? true : false;
+-		highpTexcoord = highpFog;
+-	}
+-
+-	ReplaceAlphaType stencilToAlpha = static_cast<ReplaceAlphaType>(id.Bits(FS_BIT_STENCIL_TO_ALPHA, 2));
+-
+-	std::vector<const char*> gl_exts;
+-	if (ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
+-		if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE && gl_extensions.EXT_blend_func_extended) {
+-			gl_exts.push_back("#extension GL_EXT_blend_func_extended : require");
+-		}
+-		if (gl_extensions.EXT_gpu_shader4) {
+-			gl_exts.push_back("#extension GL_EXT_gpu_shader4 : enable");
+-		}
+-		if (compat.framebufferFetchExtension) {
+-			gl_exts.push_back(compat.framebufferFetchExtension);
+-		}
+-	}
+-
+-	ShaderWriter p(buffer, compat, ShaderStage::Fragment, gl_exts.data(), gl_exts.size());
+-
+-	bool lmode = id.Bit(FS_BIT_LMODE);
+-	bool doTexture = id.Bit(FS_BIT_DO_TEXTURE);
+-	bool enableFog = id.Bit(FS_BIT_ENABLE_FOG);
+-	bool enableAlphaTest = id.Bit(FS_BIT_ALPHA_TEST);
+-
+-	bool alphaTestAgainstZero = id.Bit(FS_BIT_ALPHA_AGAINST_ZERO);
+-	bool testForceToZero = id.Bit(FS_BIT_TEST_DISCARD_TO_ZERO);
+-	bool enableColorTest = id.Bit(FS_BIT_COLOR_TEST);
+-	bool colorTestAgainstZero = id.Bit(FS_BIT_COLOR_AGAINST_ZERO);
+-	bool enableColorDoubling = id.Bit(FS_BIT_COLOR_DOUBLE);
+-	bool doTextureProjection = id.Bit(FS_BIT_DO_TEXTURE_PROJ);
+-	bool doTextureAlpha = id.Bit(FS_BIT_TEXALPHA);
+-
+-	bool flatBug = bugs.Has(Draw::Bugs::BROKEN_FLAT_IN_SHADER) && g_Config.bVendorBugChecksEnabled;
+-
+-	bool doFlatShading = id.Bit(FS_BIT_FLATSHADE) && !flatBug;
+-	bool shaderDepal = id.Bit(FS_BIT_SHADER_DEPAL);
+-	bool bgraTexture = id.Bit(FS_BIT_BGRA_TEXTURE);
+-	bool colorWriteMask = id.Bit(FS_BIT_COLOR_WRITEMASK) && compat.bitwiseOps;
+-
+-	GEComparison alphaTestFunc = (GEComparison)id.Bits(FS_BIT_ALPHA_TEST_FUNC, 3);
+-	GEComparison colorTestFunc = (GEComparison)id.Bits(FS_BIT_COLOR_TEST_FUNC, 2);
+-	bool needShaderTexClamp = id.Bit(FS_BIT_SHADER_TEX_CLAMP);
+-
+-	GETexFunc texFunc = (GETexFunc)id.Bits(FS_BIT_TEXFUNC, 3);
+-	bool textureAtOffset = id.Bit(FS_BIT_TEXTURE_AT_OFFSET);
+-
+-	ReplaceBlendType replaceBlend = static_cast<ReplaceBlendType>(id.Bits(FS_BIT_REPLACE_BLEND, 3));
+-
+-	bool blueToAlpha = false;
+-	if (replaceBlend == ReplaceBlendType::REPLACE_BLEND_BLUE_TO_ALPHA) {
+-		blueToAlpha = true;
+-	}
+-
+-	GEBlendSrcFactor replaceBlendFuncA = (GEBlendSrcFactor)id.Bits(FS_BIT_BLENDFUNC_A, 4);
+-	GEBlendDstFactor replaceBlendFuncB = (GEBlendDstFactor)id.Bits(FS_BIT_BLENDFUNC_B, 4);
+-	GEBlendMode replaceBlendEq = (GEBlendMode)id.Bits(FS_BIT_BLENDEQ, 3);
+-	StencilValueType replaceAlphaWithStencilType = (StencilValueType)id.Bits(FS_BIT_REPLACE_ALPHA_WITH_STENCIL_TYPE, 4);
+-
+-	bool isModeClear = id.Bit(FS_BIT_CLEARMODE);
+-
+-	const char *shading = "";
+-	if (compat.glslES30 || compat.shaderLanguage == ShaderLanguage::GLSL_VULKAN)
+-		shading = doFlatShading ? "flat" : "";
+-
+-	bool useDiscardStencilBugWorkaround = id.Bit(FS_BIT_NO_DEPTH_CANNOT_DISCARD_STENCIL);
+-
+-	bool readFramebuffer = replaceBlend == REPLACE_BLEND_COPY_FBO || colorWriteMask;
+-	bool readFramebufferTex = readFramebuffer && !gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH);
+-
+-	bool needFragCoord = readFramebuffer || gstate_c.Supports(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT);
+-	bool writeDepth = gstate_c.Supports(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT);
+-
+-	if (shaderDepal && !doTexture) {
+-		*errorString = "depal requires a texture";
+-		return false;
+-	}
+-
+-	if (readFramebuffer && compat.shaderLanguage == HLSL_D3D9) {
+-		*errorString = "Framebuffer read not yet supported in HLSL D3D9";
+-		return false;
+-	}
+-
+-	if (compat.shaderLanguage == ShaderLanguage::GLSL_VULKAN) {
+-		if (useDiscardStencilBugWorkaround && !gstate_c.Supports(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT)) {
+-			WRITE(p, "layout (depth_unchanged) out float gl_FragDepth;\n");
+-		}
+-
+-		WRITE(p, "layout (std140, set = 0, binding = 3) uniform baseUBO {\n%s};\n", ub_baseStr);
+-		if (doTexture) {
+-			WRITE(p, "layout (binding = 0) uniform sampler2D tex;\n");
+-		}
+-
+-		if (readFramebufferTex) {
+-			WRITE(p, "layout (binding = 1) uniform sampler2D fbotex;\n");
+-		}
+-
+-		if (shaderDepal) {
+-			WRITE(p, "layout (binding = 2) uniform sampler2D pal;\n");
+-		}
+-
+-		// Note: the precision qualifiers must match the vertex shader!
+-		WRITE(p, "layout (location = 1) %s in lowp vec4 v_color0;\n", shading);
+-		if (lmode)
+-			WRITE(p, "layout (location = 2) %s in lowp vec3 v_color1;\n", shading);
+-		if (enableFog) {
+-			WRITE(p, "layout (location = 3) in highp float v_fogdepth;\n");
+-		}
+-		if (doTexture) {
+-			WRITE(p, "layout (location = 0) in highp vec3 v_texcoord;\n");
+-		}
+-
+-		if (enableAlphaTest && !alphaTestAgainstZero) {
+-			WRITE(p, "int roundAndScaleTo255i(in highp float x) { return int(floor(x * 255.0 + 0.5)); }\n");
+-		}
+-		if (enableColorTest && !colorTestAgainstZero) {
+-			WRITE(p, "ivec3 roundAndScaleTo255iv(in highp vec3 x) { return ivec3(floor(x * 255.0 + 0.5)); }\n");
+-		}
+-
+-		WRITE(p, "layout (location = 0, index = 0) out vec4 fragColor0;\n");
+-		if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE) {
+-			WRITE(p, "layout (location = 0, index = 1) out vec4 fragColor1;\n");
+-		}
+-	} else if (compat.shaderLanguage == HLSL_D3D11 || compat.shaderLanguage == HLSL_D3D9) {
+-		if (compat.shaderLanguage == HLSL_D3D9) {
+-			if (doTexture)
+-				WRITE(p, "sampler tex : register(s0);\n");
+-
+-			if (readFramebufferTex) {
+-				WRITE(p, "vec2 u_fbotexSize : register(c%i);\n", CONST_PS_FBOTEXSIZE);
+-				WRITE(p, "sampler fbotex : register(s1);\n");
+-			}
+-
+-			if (replaceBlend > REPLACE_BLEND_STANDARD) {
+-				if (replaceBlendFuncA >= GE_SRCBLEND_FIXA) {
+-					WRITE(p, "float3 u_blendFixA : register(c%i);\n", CONST_PS_BLENDFIXA);
+-				}
+-				if (replaceBlendFuncB >= GE_DSTBLEND_FIXB) {
+-					WRITE(p, "float3 u_blendFixB : register(c%i);\n", CONST_PS_BLENDFIXB);
+-				}
+-			}
+-			if (needShaderTexClamp && doTexture) {
+-				WRITE(p, "vec4 u_texclamp : register(c%i);\n", CONST_PS_TEXCLAMP);
+-				if (textureAtOffset) {
+-					WRITE(p, "vec2 u_texclampoff : register(c%i);\n", CONST_PS_TEXCLAMPOFF);
+-				}
+-			}
+-
+-			if (enableAlphaTest || enableColorTest) {
+-				WRITE(p, "vec4 u_alphacolorref : register(c%i);\n", CONST_PS_ALPHACOLORREF);
+-				WRITE(p, "vec4 u_alphacolormask : register(c%i);\n", CONST_PS_ALPHACOLORMASK);
+-			}
+-			if (stencilToAlpha && replaceAlphaWithStencilType == STENCIL_VALUE_UNIFORM) {
+-				WRITE(p, "float u_stencilReplaceValue : register(c%i);\n", CONST_PS_STENCILREPLACE);
+-			}
+-			if (doTexture && texFunc == GE_TEXFUNC_BLEND) {
+-				WRITE(p, "float3 u_texenv : register(c%i);\n", CONST_PS_TEXENV);
+-			}
+-			if (enableFog) {
+-				WRITE(p, "float3 u_fogcolor : register(c%i);\n", CONST_PS_FOGCOLOR);
+-			}
+-		} else {
+-			WRITE(p, "SamplerState samp : register(s0);\n");
+-			WRITE(p, "Texture2D<vec4> tex : register(t0);\n");
+-			if (readFramebufferTex) {
+-				// No sampler required, we Load
+-				WRITE(p, "Texture2D<vec4> fboTex : register(t1);\n");
+-			}
+-			WRITE(p, "cbuffer base : register(b0) {\n%s};\n", ub_baseStr);
+-		}
+-
+-		if (enableAlphaTest) {
+-			if (compat.shaderLanguage == HLSL_D3D11) {
+-				WRITE(p, "int roundAndScaleTo255i(float x) { return int(floor(x * 255.0f + 0.5f)); }\n");
+-			} else {
+-				// D3D11 level 9 gets to take this path.
+-				WRITE(p, "float roundAndScaleTo255f(float x) { return floor(x * 255.0f + 0.5f); }\n");
+-			}
+-		}
+-		if (enableColorTest) {
+-			if (compat.shaderLanguage == HLSL_D3D11) {
+-				WRITE(p, "uvec3 roundAndScaleTo255iv(float3 x) { return (floor(x * 255.0f + 0.5f)); }\n");
+-			} else {
+-				WRITE(p, "vec3 roundAndScaleTo255v(float3 x) { return floor(x * 255.0f + 0.5f); }\n");
+-			}
+-		}
+-
+-		WRITE(p, "struct PS_IN {\n");
+-		if (doTexture) {
+-			WRITE(p, "  vec3 v_texcoord: TEXCOORD0;\n");
+-		}
+-		const char *colorInterpolation = doFlatShading && compat.shaderLanguage == HLSL_D3D11 ? "nointerpolation " : "";
+-		WRITE(p, "  %svec4 v_color0: COLOR0;\n", colorInterpolation);
+-		if (lmode) {
+-			WRITE(p, "  vec3 v_color1: COLOR1;\n");
+-		}
+-		if (enableFog) {
+-			WRITE(p, "  float v_fogdepth: TEXCOORD1;\n");
+-		}
+-		if (compat.shaderLanguage == HLSL_D3D11 && needFragCoord) {
+-			WRITE(p, "  vec4 pixelPos : SV_POSITION;\n");
+-		}
+-		WRITE(p, "};\n");
+-
+-		if (compat.shaderLanguage == HLSL_D3D11) {
+-			WRITE(p, "struct PS_OUT {\n");
+-			if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE) {
+-				WRITE(p, "  vec4 target : SV_Target0;\n");
+-				WRITE(p, "  vec4 target1 : SV_Target1;\n");
+-			} else {
+-				WRITE(p, "  vec4 target : SV_Target;\n");
+-			}
+-			if (writeDepth) {
+-				WRITE(p, "  float depth : SV_Depth;\n");
+-			}
+-			WRITE(p, "};\n");
+-		}
+-	} else if (compat.shaderLanguage == HLSL_D3D9) {
+-		if (doTexture)
+-			WRITE(p, "sampler tex : register(s0);\n");
+-		if (readFramebufferTex) {
+-			WRITE(p, "vec2 u_fbotexSize : register(c%i);\n", CONST_PS_FBOTEXSIZE);
+-			WRITE(p, "sampler fbotex : register(s1);\n");
+-		}
+-		if (replaceBlend > REPLACE_BLEND_STANDARD) {
+-			if (replaceBlendFuncA >= GE_SRCBLEND_FIXA) {
+-				WRITE(p, "float3 u_blendFixA : register(c%i);\n", CONST_PS_BLENDFIXA);
+-			}
+-			if (replaceBlendFuncB >= GE_DSTBLEND_FIXB) {
+-				WRITE(p, "float3 u_blendFixB : register(c%i);\n", CONST_PS_BLENDFIXB);
+-			}
+-		}
+-		if (needShaderTexClamp && doTexture) {
+-			WRITE(p, "vec4 u_texclamp : register(c%i);\n", CONST_PS_TEXCLAMP);
+-			if (textureAtOffset) {
+-				WRITE(p, "vec2 u_texclampoff : register(c%i);\n", CONST_PS_TEXCLAMPOFF);
+-			}
+-		}
+-
+-		if (enableAlphaTest || enableColorTest) {
+-			WRITE(p, "vec4 u_alphacolorref : register(c%i);\n", CONST_PS_ALPHACOLORREF);
+-			WRITE(p, "vec4 u_alphacolormask : register(c%i);\n", CONST_PS_ALPHACOLORMASK);
+-		}
+-		if (stencilToAlpha && replaceAlphaWithStencilType == STENCIL_VALUE_UNIFORM) {
+-			WRITE(p, "float u_stencilReplaceValue : register(c%i);\n", CONST_PS_STENCILREPLACE);
+-		}
+-		if (doTexture && texFunc == GE_TEXFUNC_BLEND) {
+-			WRITE(p, "float3 u_texenv : register(c%i);\n", CONST_PS_TEXENV);
+-		}
+-		if (enableFog) {
+-			WRITE(p, "float3 u_fogcolor : register(c%i);\n", CONST_PS_FOGCOLOR);
+-		}
+-	} else if (ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
+-		if ((shaderDepal || colorWriteMask) && gl_extensions.IsGLES) {
+-			WRITE(p, "precision highp int;\n");
+-		}
+ 
+-		if (doTexture)
+-			WRITE(p, "uniform sampler2D tex;\n");
+ 
+-		if (readFramebufferTex) {
+-			if (!compat.texelFetch) {
+-				WRITE(p, "uniform vec2 u_fbotexSize;\n");
+-			}
+-			WRITE(p, "uniform sampler2D fbotex;\n");
+-		}
++    enum BIT_FLAG {
++        _highpFog = 0,
++        _enableFragmentTestCache,
++        _texture3D,
++        _lmode,
++        _doTexture,
++        _enableFog,
++        _enableAlphaTest,
++        _alphaTestAgainstZero,
++        _testForceToZero,
++        _enableColorTest,
++        _colorTestAgainstZero,
++        _enableColorDoubling,
++        _doTextureProjection,
++        _doTextureAlpha,
++        _flatBug,
++        _doFlatShading,
++        _shaderDepal,
++        _smoothedDepal,
++        _bgraTexture,
++        _colorWriteMask,
++        _needShaderTexClamp,
++        _blueToAlpha,
++        _isModeClear,
++        _useDiscardStencilBugWorkaround,
++        _readFramebuffer,
++        _readFramebufferTex,
++        _needFragCoord,
++        _writeDepth,
++        // _hasPackUnorm4x8
++
++    };
++    unsigned long flag_value;
++
++
++    *uniformMask = 0;
++    errorString->clear();
++
++    bool highpFog = false;
++    bool highpTexcoord = false;
++    bool enableFragmentTestCache =
++            g_Config.bFragmentTestCache && ShaderLanguageIsOpenGL(compat.shaderLanguage);
++
++    if (compat.gles) {
++        // PowerVR needs highp to do the fog in MHU correctly.
++        // Others don't, and some can't handle highp in the fragment shader.
++        highpFog = (gl_extensions.bugs & BUG_PVR_SHADER_PRECISION_BAD) ? true : false;
++        highpTexcoord = highpFog;
++    }
++
++    bool texture3D = id.Bit(FS_BIT_3D_TEXTURE);
++
++    ReplaceAlphaType stencilToAlpha = static_cast<ReplaceAlphaType>(id.Bits(FS_BIT_STENCIL_TO_ALPHA,
++                                                                            2));
++
++    std::vector<const char *> gl_exts;
++    if (ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
++        if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE && gl_extensions.EXT_blend_func_extended) {
++            gl_exts.push_back("#extension GL_EXT_blend_func_extended : require");
++        }
++        if (gl_extensions.EXT_gpu_shader4) {
++            gl_exts.push_back("#extension GL_EXT_gpu_shader4 : enable");
++        }
++        if (compat.framebufferFetchExtension) {
++            gl_exts.push_back(compat.framebufferFetchExtension);
++        }
++        if (gl_extensions.OES_texture_3D && texture3D) {
++            gl_exts.push_back("#extension GL_OES_texture_3D: enable");
++        }
++    }
++
++    ShaderWriter p(buffer, compat, ShaderStage::Fragment, gl_exts.data(), gl_exts.size());
++
++    bool lmode = id.Bit(FS_BIT_LMODE);
++    bool doTexture = id.Bit(FS_BIT_DO_TEXTURE);
++    bool enableFog = id.Bit(FS_BIT_ENABLE_FOG);
++    bool enableAlphaTest = id.Bit(FS_BIT_ALPHA_TEST);
++
++    bool alphaTestAgainstZero = id.Bit(FS_BIT_ALPHA_AGAINST_ZERO);
++    bool testForceToZero = id.Bit(FS_BIT_TEST_DISCARD_TO_ZERO);
++    bool enableColorTest = id.Bit(FS_BIT_COLOR_TEST);
++    bool colorTestAgainstZero = id.Bit(FS_BIT_COLOR_AGAINST_ZERO);
++    bool enableColorDoubling = id.Bit(FS_BIT_COLOR_DOUBLE);
++    bool doTextureProjection = id.Bit(FS_BIT_DO_TEXTURE_PROJ);
++    bool doTextureAlpha = id.Bit(FS_BIT_TEXALPHA);
++
++    bool flatBug = bugs.Has(Draw::Bugs::BROKEN_FLAT_IN_SHADER) && g_Config.bVendorBugChecksEnabled;
++
++    bool doFlatShading = id.Bit(FS_BIT_FLATSHADE) && !flatBug;
++    bool shaderDepal = id.Bit(FS_BIT_SHADER_DEPAL) &&
++                       !texture3D;  // combination with texture3D not supported. Enforced elsewhere too.
++    bool smoothedDepal = id.Bit(FS_BIT_SHADER_SMOOTHED_DEPAL);
++    bool bgraTexture = id.Bit(FS_BIT_BGRA_TEXTURE);
++    bool colorWriteMask = id.Bit(FS_BIT_COLOR_WRITEMASK) && compat.bitwiseOps;
++
++    GEComparison alphaTestFunc = (GEComparison) id.Bits(FS_BIT_ALPHA_TEST_FUNC, 3);
++    GEComparison colorTestFunc = (GEComparison) id.Bits(FS_BIT_COLOR_TEST_FUNC, 2);
++    bool needShaderTexClamp = id.Bit(FS_BIT_SHADER_TEX_CLAMP);
++
++    GETexFunc texFunc = (GETexFunc) id.Bits(FS_BIT_TEXFUNC, 3);
++    bool textureAtOffset = id.Bit(FS_BIT_TEXTURE_AT_OFFSET);
++
++    ReplaceBlendType replaceBlend = static_cast<ReplaceBlendType>(id.Bits(FS_BIT_REPLACE_BLEND, 3));
++
++    bool blueToAlpha = false;
++    if (replaceBlend == ReplaceBlendType::REPLACE_BLEND_BLUE_TO_ALPHA) {
++        blueToAlpha = true;
++    }
++
++    GEBlendSrcFactor replaceBlendFuncA = (GEBlendSrcFactor) id.Bits(FS_BIT_BLENDFUNC_A, 4);
++    GEBlendDstFactor replaceBlendFuncB = (GEBlendDstFactor) id.Bits(FS_BIT_BLENDFUNC_B, 4);
++    GEBlendMode replaceBlendEq = (GEBlendMode) id.Bits(FS_BIT_BLENDEQ, 3);
++    StencilValueType replaceAlphaWithStencilType = (StencilValueType) id.Bits(
++            FS_BIT_REPLACE_ALPHA_WITH_STENCIL_TYPE, 4);
++
++    bool isModeClear = id.Bit(FS_BIT_CLEARMODE);
++
++    const char *shading = "";
++    if (compat.glslES30 || compat.shaderLanguage == ShaderLanguage::GLSL_VULKAN)
++        shading = doFlatShading ? "flat" : "";
++
++    bool useDiscardStencilBugWorkaround = id.Bit(FS_BIT_NO_DEPTH_CANNOT_DISCARD_STENCIL);
++
++    bool readFramebuffer = replaceBlend == REPLACE_BLEND_COPY_FBO || colorWriteMask;
++    bool readFramebufferTex =
++            readFramebuffer && !gstate_c.Supports(GPU_SUPPORTS_ANY_FRAMEBUFFER_FETCH);
++
++    bool needFragCoord = readFramebuffer || gstate_c.Supports(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT);
++    bool writeDepth = gstate_c.Supports(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT);
++
++    std::bitset<28> flag;
++    flag.reset();
++    flag[_highpFog] = highpFog;
++    flag[_enableFragmentTestCache] = enableFragmentTestCache;
++    flag[_texture3D] = texture3D;
++    flag[_lmode] = lmode;
++    flag[_doTexture] = doTexture;
++    flag[_enableFog] = enableFog;
++    flag[_enableAlphaTest] = enableAlphaTest;
++    flag[_alphaTestAgainstZero] = alphaTestAgainstZero;
++    flag[_testForceToZero] = testForceToZero;
++    flag[_enableColorTest] = enableColorTest;
++    flag[_colorTestAgainstZero] = colorTestAgainstZero;
++    flag[_enableColorDoubling] = enableColorDoubling;
++    flag[_doTextureProjection] = doTextureProjection;
++    flag[_doTextureAlpha] = doTextureAlpha;
++    flag[_flatBug] = flatBug;
++    flag[_doFlatShading] = doFlatShading;
++    flag[_shaderDepal] = shaderDepal;
++    flag[_smoothedDepal] = smoothedDepal;
++    flag[_bgraTexture] = bgraTexture;
++    flag[_colorWriteMask] = colorWriteMask;
++    flag[_needShaderTexClamp] = needShaderTexClamp;
++    flag[_blueToAlpha] = blueToAlpha;
++    flag[_isModeClear] = isModeClear;
++    flag[_useDiscardStencilBugWorkaround] = useDiscardStencilBugWorkaround;
++    flag[_readFramebuffer] = readFramebuffer;
++    flag[_readFramebufferTex] = readFramebufferTex;
++    flag[_needFragCoord] = needFragCoord;
++    flag[_writeDepth] = writeDepth;
++    // flag[_hasPackUnorm4x8] = hasPackUnorm4x8;
++    flag_value = flag.to_ulong();
++    bool is_opengles = false;
++
++#ifdef __FRAGMENT_GLSL_FILE__
++    char file_name[128]={0};
++    sprintf(file_name,"Fragment_0x%x.glsl",flag_value);
++    std::string out_name = file_name;
++    std::string dir_path = "/storage/emulated/0/Android/data/org.ppsspp.ppsspp/files/glsl";
++#endif
++
++    if (shaderDepal && !doTexture) {
++        *errorString = "depal requires a texture";
++        return false;
++    }
++
++    if (readFramebuffer && compat.shaderLanguage == HLSL_D3D9) {
++        *errorString = "Framebuffer read not yet supported in HLSL D3D9";
++        return false;
++    }
++
++    if (compat.shaderLanguage == ShaderLanguage::GLSL_VULKAN) {
++        if (useDiscardStencilBugWorkaround &&
++            !gstate_c.Supports(GPU_ROUND_FRAGMENT_DEPTH_TO_16BIT)) {
++            WRITE(p, "layout (depth_unchanged) out float gl_FragDepth;\n");
++        }
++
++        WRITE(p, "layout (std140, set = 0, binding = 3) uniform baseUBO {\n%s};\n", ub_baseStr);
++        if (doTexture) {
++            WRITE(p, "layout (binding = 0) uniform %s tex;\n",
++                  texture3D ? "sampler3D" : "sampler2D");
++        }
++
++        if (readFramebufferTex) {
++            WRITE(p, "layout (binding = 1) uniform sampler2D fbotex;\n");
++        }
++
++        if (shaderDepal) {
++            WRITE(p, "layout (binding = 2) uniform sampler2D pal;\n");
++        }
++
++        // Note: the precision qualifiers must match the vertex shader!
++        WRITE(p, "layout (location = 1) %s in lowp vec4 v_color0;\n", shading);
++        if (lmode)
++            WRITE(p, "layout (location = 2) %s in lowp vec3 v_color1;\n", shading);
++        if (enableFog) {
++            WRITE(p, "layout (location = 3) in highp float v_fogdepth;\n");
++        }
++        if (doTexture) {
++            WRITE(p, "layout (location = 0) in highp vec3 v_texcoord;\n");
++        }
++
++        if (enableAlphaTest && !alphaTestAgainstZero) {
++            WRITE(p,
++                  "int roundAndScaleTo255i(in highp float x) { return int(floor(x * 255.0 + 0.5)); }\n");
++        }
++        if (enableColorTest && !colorTestAgainstZero) {
++            WRITE(p,
++                  "ivec3 roundAndScaleTo255iv(in highp vec3 x) { return ivec3(floor(x * 255.0 + 0.5)); }\n");
++        }
++
++        WRITE(p, "layout (location = 0, index = 0) out vec4 fragColor0;\n");
++        if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE) {
++            WRITE(p, "layout (location = 0, index = 1) out vec4 fragColor1;\n");
++        }
++    } else if (compat.shaderLanguage == HLSL_D3D11 || compat.shaderLanguage == HLSL_D3D9) {
++        if (compat.shaderLanguage == HLSL_D3D9) {
++            if (doTexture)
++                WRITE(p, "sampler tex : register(s0);\n");
++
++            if (readFramebufferTex) {
++                WRITE(p, "vec2 u_fbotexSize : register(c%i);\n", CONST_PS_FBOTEXSIZE);
++                WRITE(p, "sampler fbotex : register(s1);\n");
++            }
++
++            if (replaceBlend > REPLACE_BLEND_STANDARD) {
++                if (replaceBlendFuncA >= GE_SRCBLEND_FIXA) {
++                    WRITE(p, "float3 u_blendFixA : register(c%i);\n", CONST_PS_BLENDFIXA);
++                }
++                if (replaceBlendFuncB >= GE_DSTBLEND_FIXB) {
++                    WRITE(p, "float3 u_blendFixB : register(c%i);\n", CONST_PS_BLENDFIXB);
++                }
++            }
++            if (needShaderTexClamp && doTexture) {
++                WRITE(p, "vec4 u_texclamp : register(c%i);\n", CONST_PS_TEXCLAMP);
++                if (textureAtOffset) {
++                    WRITE(p, "vec2 u_texclampoff : register(c%i);\n", CONST_PS_TEXCLAMPOFF);
++                }
++            }
++
++            if (enableAlphaTest || enableColorTest) {
++                WRITE(p, "vec4 u_alphacolorref : register(c%i);\n", CONST_PS_ALPHACOLORREF);
++                WRITE(p, "vec4 u_alphacolormask : register(c%i);\n", CONST_PS_ALPHACOLORMASK);
++            }
++            if (stencilToAlpha && replaceAlphaWithStencilType == STENCIL_VALUE_UNIFORM) {
++                WRITE(p, "float u_stencilReplaceValue : register(c%i);\n", CONST_PS_STENCILREPLACE);
++            }
++            if (doTexture && texFunc == GE_TEXFUNC_BLEND) {
++                WRITE(p, "float3 u_texenv : register(c%i);\n", CONST_PS_TEXENV);
++            }
++            if (enableFog) {
++                WRITE(p, "float3 u_fogcolor : register(c%i);\n", CONST_PS_FOGCOLOR);
++            }
++            if (texture3D) {
++                WRITE(p, "float u_mipBias : register(c%i);\n", CONST_PS_MIPBIAS);
++            }
++        } else {
++            WRITE(p, "SamplerState samp : register(s0);\n");
++            if (texture3D) {
++                WRITE(p, "Texture3D<vec4> tex : register(t0);\n");
++            } else {
++                WRITE(p, "Texture2D<vec4> tex : register(t0);\n");
++            }
++            if (readFramebufferTex) {
++                // No sampler required, we Load
++                WRITE(p, "Texture2D<vec4> fboTex : register(t1);\n");
++            }
++            WRITE(p, "cbuffer base : register(b0) {\n%s};\n", ub_baseStr);
++
++            if (shaderDepal) {
++                WRITE(p,
++                      "float2 textureSize(Texture2D<float4> tex, int mip) { float2 size; tex.GetDimensions(size.x, size.y); return size; }\n");
++            }
++        }
++
++        if (enableAlphaTest) {
++            if (compat.shaderLanguage == HLSL_D3D11) {
++                WRITE(p,
++                      "int roundAndScaleTo255i(float x) { return int(floor(x * 255.0f + 0.5f)); }\n");
++            } else {
++                // D3D11 level 9 gets to take this path.
++                WRITE(p,
++                      "float roundAndScaleTo255f(float x) { return floor(x * 255.0f + 0.5f); }\n");
++            }
++        }
++        if (enableColorTest) {
++            if (compat.shaderLanguage == HLSL_D3D11) {
++                WRITE(p,
++                      "uvec3 roundAndScaleTo255iv(float3 x) { return (floor(x * 255.0f + 0.5f)); }\n");
++            } else {
++                WRITE(p,
++                      "vec3 roundAndScaleTo255v(float3 x) { return floor(x * 255.0f + 0.5f); }\n");
++            }
++        }
++
++        WRITE(p, "struct PS_IN {\n");
++        if (doTexture) {
++            WRITE(p, "  vec3 v_texcoord: TEXCOORD0;\n");
++        }
++        const char *colorInterpolation =
++                doFlatShading && compat.shaderLanguage == HLSL_D3D11 ? "nointerpolation " : "";
++        WRITE(p, "  %svec4 v_color0: COLOR0;\n", colorInterpolation);
++        if (lmode) {
++            WRITE(p, "  vec3 v_color1: COLOR1;\n");
++        }
++        if (enableFog) {
++            WRITE(p, "  float v_fogdepth: TEXCOORD1;\n");
++        }
++        if (compat.shaderLanguage == HLSL_D3D11 && needFragCoord) {
++            WRITE(p, "  vec4 pixelPos : SV_POSITION;\n");
++        }
++        WRITE(p, "};\n");
++
++        if (compat.shaderLanguage == HLSL_D3D11) {
++            WRITE(p, "struct PS_OUT {\n");
++            if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE) {
++                WRITE(p, "  vec4 target : SV_Target0;\n");
++                WRITE(p, "  vec4 target1 : SV_Target1;\n");
++            } else {
++                WRITE(p, "  vec4 target : SV_Target;\n");
++            }
++            if (writeDepth) {
++                WRITE(p, "  float depth : SV_Depth;\n");
++            }
++            WRITE(p, "};\n");
++        } else if (compat.shaderLanguage == HLSL_D3D9) {
++            WRITE(p, "struct PS_OUT {\n");
++            WRITE(p, "  vec4 target : COLOR;\n");
++            if (writeDepth) {
++                WRITE(p, "  float depth : DEPTH;\n");
++            }
++            WRITE(p, "};\n");
++        }
++    } else if (ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
++        if ((shaderDepal || colorWriteMask) && gl_extensions.IsGLES) {
++            WRITE(p, "precision highp int;\n");
++        }
++
++        if (doTexture) {
++            if (texture3D) {
++                // For whatever reason, a precision specifier is required here.
++                WRITE(p, "uniform lowp sampler3D tex;\n");
++            } else {
++                WRITE(p, "uniform sampler2D tex;\n");
++            }
++        }
++
++        if (readFramebufferTex) {
++            if (!compat.texelFetch) {
++                WRITE(p, "uniform vec2 u_fbotexSize;\n");
++            }
++            WRITE(p, "uniform sampler2D fbotex;\n");
++        }
++
++        if (!isModeClear && replaceBlend > REPLACE_BLEND_STANDARD) {
++            *uniformMask |= DIRTY_SHADERBLEND;
++            if (replaceBlendFuncA >= GE_SRCBLEND_FIXA) {
++                WRITE(p, "uniform vec3 u_blendFixA;\n");
++            }
++            if (replaceBlendFuncB >= GE_DSTBLEND_FIXB) {
++                WRITE(p, "uniform vec3 u_blendFixB;\n");
++            }
++        }
++
++        if (needShaderTexClamp && doTexture) {
++            *uniformMask |= DIRTY_TEXCLAMP;
++            WRITE(p, "uniform vec4 u_texclamp;\n");
++            if (id.Bit(FS_BIT_TEXTURE_AT_OFFSET)) {
++                WRITE(p, "uniform vec2 u_texclampoff;\n");
++            }
++        }
++
++        if (enableAlphaTest || enableColorTest) {
++            if (enableFragmentTestCache) {
++                WRITE(p, "uniform sampler2D testtex;\n");
++            } else {
++                *uniformMask |= DIRTY_ALPHACOLORREF;
++                WRITE(p, "uniform vec4 u_alphacolorref;\n");
++                if (compat.bitwiseOps && ((enableColorTest && !colorTestAgainstZero) ||
++                                          (enableAlphaTest && !alphaTestAgainstZero))) {
++                    *uniformMask |= DIRTY_ALPHACOLORMASK;
++                    WRITE(p, "uniform ivec4 u_alphacolormask;\n");
++                }
++            }
++        }
++
++        if (shaderDepal) {
++            WRITE(p, "uniform sampler2D pal;\n");
++            WRITE(p, "uniform uint u_depal_mask_shift_off_fmt;\n");
++            *uniformMask |= DIRTY_DEPAL;
++        }
++
++        if (colorWriteMask) {
++            WRITE(p, "uniform uint u_colorWriteMask;\n");
++            *uniformMask |= DIRTY_COLORWRITEMASK;
++        }
++
++        if (stencilToAlpha && replaceAlphaWithStencilType == STENCIL_VALUE_UNIFORM) {
++            *uniformMask |= DIRTY_STENCILREPLACEVALUE;
++            WRITE(p, "uniform float u_stencilReplaceValue;\n");
++        }
++        if (doTexture && texFunc == GE_TEXFUNC_BLEND) {
++            *uniformMask |= DIRTY_TEXENV;
++            WRITE(p, "uniform vec3 u_texenv;\n");
++        }
++
++        if (texture3D) {
++            *uniformMask |= DIRTY_MIPBIAS;
++            WRITE(p, "uniform float u_mipBias;\n");
++        }
++
++        WRITE(p, "%s %s lowp vec4 v_color0;\n", shading, compat.varying_fs);
++        if (lmode)
++            WRITE(p, "%s %s lowp vec3 v_color1;\n", shading, compat.varying_fs);
++        if (enableFog) {
++            *uniformMask |= DIRTY_FOGCOLOR;
++            WRITE(p, "uniform vec3 u_fogcolor;\n");
++            WRITE(p, "%s %s float v_fogdepth;\n", compat.varying_fs,
++                  highpFog ? "highp" : "mediump");
++
++        }
++
++
++        if (doTexture) {
++            WRITE(p, "%s %s vec3 v_texcoord;\n", compat.varying_fs,
++                  highpTexcoord ? "highp" : "mediump");
++
++
++        }
++
++        if (!enableFragmentTestCache) {
++            if (enableAlphaTest && !alphaTestAgainstZero) {
++                if (compat.bitwiseOps) {
++                    WRITE(p,
++                          "int roundAndScaleTo255i(in float x) { return int(floor(x * 255.0 + 0.5)); }\n");
++                } else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
++                    WRITE(p,
++                          "float roundTo255thf(in mediump float x) { mediump float y = x + (0.5/255.0); return y - fract(y * 255.0) * (1.0 / 255.0); }\n");
++                } else {
++                    WRITE(p,
++                          "float roundAndScaleTo255f(in float x) { return floor(x * 255.0 + 0.5); }\n");
++                }
++            }
++            if (enableColorTest && !colorTestAgainstZero) {
++                if (compat.bitwiseOps) {
++                    WRITE(p,
++                          "ivec3 roundAndScaleTo255iv(in vec3 x) { return ivec3(floor(x * 255.0 + 0.5)); }\n");
++                } else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
++                    WRITE(p,
++                          "vec3 roundTo255thv(in vec3 x) { vec3 y = x + (0.5/255.0); return y - fract(y * 255.0) * (1.0 / 255.0); }\n");
++                } else {
++                    WRITE(p,
++                          "vec3 roundAndScaleTo255v(in vec3 x) { return floor(x * 255.0 + 0.5); }\n");
++                }
++            }
++        }
++
++        if (!strcmp(compat.fragColor0, "fragColor0")) {
++            const char *qualifierColor0 = "out";
++            if (readFramebuffer && compat.lastFragData &&
++                !strcmp(compat.lastFragData, compat.fragColor0)) {
++                qualifierColor0 = "inout";
++            }
++            // Output the output color definitions.
++            if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE) {
++                WRITE(p, "%s vec4 fragColor0;\n", qualifierColor0);
++                WRITE(p, "out vec4 fragColor1;\n");
++            } else {
++                WRITE(p, "%s vec4 fragColor0;\n", qualifierColor0);
++            }
++        }
++    }
+ 
+-		if (!isModeClear && replaceBlend > REPLACE_BLEND_STANDARD) {
+-			*uniformMask |= DIRTY_SHADERBLEND;
+-			if (replaceBlendFuncA >= GE_SRCBLEND_FIXA) {
+-				WRITE(p, "uniform vec3 u_blendFixA;\n");
+-			}
+-			if (replaceBlendFuncB >= GE_DSTBLEND_FIXB) {
+-				WRITE(p, "uniform vec3 u_blendFixB;\n");
+-			}
+-		}
+ 
+-		if (needShaderTexClamp && doTexture) {
+-			*uniformMask |= DIRTY_TEXCLAMP;
+-			WRITE(p, "uniform vec4 u_texclamp;\n");
+-			if (id.Bit(FS_BIT_TEXTURE_AT_OFFSET)) {
+-				WRITE(p, "uniform vec2 u_texclampoff;\n");
+-			}
+-		}
++    bool hasPackUnorm4x8 = false;
+ 
+-		if (enableAlphaTest || enableColorTest) {
+-			if (enableFragmentTestCache) {
+-				WRITE(p, "uniform sampler2D testtex;\n");
+-			} else {
+-				*uniformMask |= DIRTY_ALPHACOLORREF;
+-				WRITE(p, "uniform vec4 u_alphacolorref;\n");
+-				if (compat.bitwiseOps && ((enableColorTest && !colorTestAgainstZero) || (enableAlphaTest && !alphaTestAgainstZero))) {
+-					*uniformMask |= DIRTY_ALPHACOLORMASK;
+-					WRITE(p, "uniform ivec4 u_alphacolormask;\n");
+-				}
+-			}
+-		}
+ 
+-		if (shaderDepal) {
+-			WRITE(p, "uniform sampler2D pal;\n");
+-			WRITE(p, "uniform uint u_depal_mask_shift_off_fmt;\n");
+-			*uniformMask |= DIRTY_DEPAL;
+-		}
+-
+-		if (colorWriteMask) {
+-			WRITE(p, "uniform uint u_colorWriteMask;\n");
+-			*uniformMask |= DIRTY_COLORWRITEMASK;
+-		}
+-
+-		if (stencilToAlpha && replaceAlphaWithStencilType == STENCIL_VALUE_UNIFORM) {
+-			*uniformMask |= DIRTY_STENCILREPLACEVALUE;
+-			WRITE(p, "uniform float u_stencilReplaceValue;\n");
+-		}
+-		if (doTexture && texFunc == GE_TEXFUNC_BLEND) {
+-			*uniformMask |= DIRTY_TEXENV;
+-			WRITE(p, "uniform vec3 u_texenv;\n");
+-		}
+-
+-		WRITE(p, "%s %s lowp vec4 v_color0;\n", shading, compat.varying_fs);
+-		if (lmode)
+-			WRITE(p, "%s %s lowp vec3 v_color1;\n", shading, compat.varying_fs);
+-		if (enableFog) {
+-			*uniformMask |= DIRTY_FOGCOLOR;
+-			WRITE(p, "uniform vec3 u_fogcolor;\n");
+-			WRITE(p, "%s %s float v_fogdepth;\n", compat.varying_fs, highpFog ? "highp" : "mediump");
+-		}
+-		if (doTexture) {
+-			WRITE(p, "%s %s vec3 v_texcoord;\n", compat.varying_fs, highpTexcoord ? "highp" : "mediump");
+-		}
+-
+-		if (!enableFragmentTestCache) {
+-			if (enableAlphaTest && !alphaTestAgainstZero) {
+-				if (compat.bitwiseOps) {
+-					WRITE(p, "int roundAndScaleTo255i(in float x) { return int(floor(x * 255.0 + 0.5)); }\n");
+-				} else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
+-					WRITE(p, "float roundTo255thf(in mediump float x) { mediump float y = x + (0.5/255.0); return y - fract(y * 255.0) * (1.0 / 255.0); }\n");
+-				} else {
+-					WRITE(p, "float roundAndScaleTo255f(in float x) { return floor(x * 255.0 + 0.5); }\n");
+-				}
+-			}
+-			if (enableColorTest && !colorTestAgainstZero) {
+-				if (compat.bitwiseOps) {
+-					WRITE(p, "ivec3 roundAndScaleTo255iv(in vec3 x) { return ivec3(floor(x * 255.0 + 0.5)); }\n");
+-				} else if (gl_extensions.gpuVendor == GPU_VENDOR_IMGTEC) {
+-					WRITE(p, "vec3 roundTo255thv(in vec3 x) { vec3 y = x + (0.5/255.0); return y - fract(y * 255.0) * (1.0 / 255.0); }\n");
+-				} else {
+-					WRITE(p, "vec3 roundAndScaleTo255v(in vec3 x) { return floor(x * 255.0 + 0.5); }\n");
+-				}
+-			}
+-		}
+-
+-		if (!strcmp(compat.fragColor0, "fragColor0")) {
+-			const char *qualifierColor0 = "out";
+-			if (readFramebuffer && compat.lastFragData && !strcmp(compat.lastFragData, compat.fragColor0)) {
+-				qualifierColor0 = "inout";
+-			}
+-			// Output the output color definitions.
+-			if (stencilToAlpha == REPLACE_ALPHA_DUALSOURCE) {
+-				WRITE(p, "%s vec4 fragColor0;\n", qualifierColor0);
+-				WRITE(p, "out vec4 fragColor1;\n");
+-			} else {
+-				WRITE(p, "%s vec4 fragColor0;\n", qualifierColor0);
+-			}
+-		}
+-	}
+-
+-	bool hasPackUnorm4x8 = false;
+-	if (compat.shaderLanguage == GLSL_VULKAN) {
++    if (compat.shaderLanguage == GLSL_VULKAN) {
+ 		hasPackUnorm4x8 = true;
+ 	} else if (ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
+ 		if (compat.gles) {
+@@ -423,7 +540,13 @@
+ 		}
+ 	}
+ 
+-	// Provide implementations of packUnorm4x8 and unpackUnorm4x8 if not available.
++
++
++
++
++
++
++    // Provide implementations of packUnorm4x8 and unpackUnorm4x8 if not available.
+ 	if (colorWriteMask && !hasPackUnorm4x8) {
+ 		WRITE(p, "uint packUnorm4x8(%svec4 v) {\n", compat.shaderLanguage == GLSL_VULKAN ? "highp " : "");
+ 		WRITE(p, "  highp vec4 f = clamp(v, 0.0, 1.0);\n");
+@@ -453,10 +576,205 @@
+ 			WRITE(p, "  float gl_FragDepth;\n");
+ 		}
+ 	} else if (compat.shaderLanguage == HLSL_D3D9) {
+-		WRITE(p, "vec4 main( PS_IN In ) : COLOR {\n");
++		WRITE(p, "PS_OUT main( PS_IN In ) {\n");
++		WRITE(p, "  PS_OUT outfragment;\n");
+ 		WRITE(p, "  vec4 target;\n");
+ 	} else {
+-		WRITE(p, "void main() {\n");
++
++        if (ShaderLanguageIsOpenGL(compat.shaderLanguage)){
++            is_opengles = true;
++
++           if( flag_value == 0x32 || flag_value == 0x2032) {
++
++               WRITE(p, "//****** my_varying_fs *********\n");
++               WRITE(p, "precision highp float;\n");
++               WRITE(p, "%s %s lowp flat int flag;\n", shading, compat.varying_fs);
++               WRITE(p, "%s %s highp vec4 v_1;\n", shading, compat.varying_fs);
++               WRITE(p, "%s %s highp vec4 v_2;\n", shading, compat.varying_fs);
++               WRITE(p, "%s %s highp vec4 v_3;\n", shading, compat.varying_fs);
++               WRITE(p, "%s %s highp vec4 v_4;\n", shading, compat.varying_fs);
++               WRITE(p, "%s %s highp vec4 v_5;\n", shading, compat.varying_fs);
++#ifdef __FRAGMENT_GLSL_FILE__
++
++               WRITE(p, "%s %s highp vec4 v_6;\n", shading, compat.varying_fs);
++               WRITE(p, "%s %s highp vec4 v_7;\n", shading, compat.varying_fs);
++               WRITE(p, "%s %s highp vec4 v_8;\n", shading, compat.varying_fs);
++
++
++
++#endif
++
++
++
++
++/*
++
++               WRITE(p, "vec3 albedo;\n");
++                WRITE(p, "float metallic = 0.5;\n");
++                WRITE(p, "float roughness = 0.15;\n");
++                WRITE(p, "vec3 lightPositions[2];\n");
++                WRITE(p, "vec3 lightColors[2];\n");
++                WRITE(p, "vec3 camPos = vec3(0.0, 0.0, 50.0);\n");
++                WRITE(p, "const float PI = 3.14159265359;\n");
++                WRITE(p, "float lightness(float R, float G, float B) {\n");
++                 WRITE(p, "return pow(pow(R / 1.0, 2.2) + pow(G / 0.666666, 2.2) +pow(B / 1.666666, 2.2),1.0 / 2.2) *0.547373;\n");
++                WRITE(p, "}\n");
++
++
++
++
++               // ----------------------------------------------------------------------------
++WRITE(p, "float DistributionGGX(vec3 N, vec3 H, float roughness) {\n");
++        WRITE(p, "float a = roughness * roughness;\n");
++        WRITE(p, "float a2 = a * a;\n");
++        WRITE(p, "float NdotH = max(dot(N, H), 0.0);\n");
++        WRITE(p, "float NdotH2 = NdotH * NdotH;\n");
++
++        WRITE(p, "float nom = a2;\n");
++        WRITE(p, "float denom = (NdotH2 * (a2 - 1.0) + 1.0);\n");
++        WRITE(p, "denom = PI * denom * denom;\n");
++
++            WRITE(p, "return nom / denom;\n");
++        WRITE(p, "}\n");
++// ----------------------------------------------------------------------------
++        WRITE(p, "float GeometrySchlickGGX(float NdotV, float roughness) {\n");
++        WRITE(p, "float r = (roughness + 1.0);\n");
++        WRITE(p, "float k = (r * r) / 8.0;\n");
++
++        WRITE(p, "float nom = NdotV;\n");
++        WRITE(p, "float denom = NdotV * (1.0 - k) + k;\n");
++
++            WRITE(p, "return nom / denom;\n");
++        WRITE(p, "}\n");
++// ----------------------------------------------------------------------------
++        WRITE(p, "float GeometrySmith(vec3 N, vec3 V, vec3 L, float roughness) {\n");
++        WRITE(p, "float NdotV = max(dot(N, V), 0.0);\n");
++        WRITE(p, "float NdotL = max(dot(N, L), 0.0);\n");
++        WRITE(p, "float ggx2 = GeometrySchlickGGX(NdotV, roughness);\n");
++        WRITE(p, "float ggx1 = GeometrySchlickGGX(NdotL, roughness);\n");
++
++            WRITE(p, "return ggx1 * ggx2;\n");
++        WRITE(p, "}\n");
++// ----------------------------------------------------------------------------
++        WRITE(p, "vec3 fresnelSchlick(float cosTheta, vec3 F0) {\n");
++            WRITE(p, "return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);\n");
++            WRITE(p, "}\n");
++// ----------------------------------------------------------------------------
++
++ WRITE(p, "void PBR__2_0() {\n");
++
++   WRITE(p, "vec3 N = normalize(v_1.xyz);\n");
++   WRITE(p, "vec3 fogcolor = vec3(mix(vec3(dot(u_fogcolor, vec3(0.299, 0.587, 0.114))),u_fogcolor, 0.5));\n");
++
++   WRITE(p, "float l = lightness(u_fogcolor.r , u_fogcolor.g ,u_fogcolor.b );\n");
++
++   WRITE(p, "vec3 ld;\n");
++   WRITE(p, "float ll;\n");
++   WRITE(p, "float min;\n");
++   WRITE(p, "fogcolor += 0.75 - l;\n");
++ WRITE(p, "vec3 fogcolor_inverse = 1.0 - fogcolor;\n");
++
++ WRITE(p, "vec3 diff1 ,diff2;\n");
++  //黑雾
++   WRITE(p, "if (l < 0.15) {\n");
++     WRITE(p, "min = 0.2;\n");
++     WRITE(p, "ll = 1.5;\n");
++     WRITE(p, "ld = normalize(v_5.xyz);\n");
++     WRITE(p, "ld.z = abs(ld.z) * 7.0;\n");
++
++     WRITE(p, "diff1 =( fogcolor)*ll;\n");
++     WRITE(p, "diff2 = fogcolor_inverse*ll;\n");
++
++
++     WRITE(p, "lightPositions[0].z = v_3.z* 1000.0;\n");
++     WRITE(p, "lightPositions[1].z = v_4.z * 1000.0;\n");
++
++     WRITE(p, "lightColors[0] = fogcolor_inverse;\n");
++     WRITE(p, "lightColors[1] =  fogcolor;\n");
++
++
++
++   WRITE(p, "} else {\n");
++
++     WRITE(p, "min = 0.1;\n");
++     WRITE(p, "ll = 2.0;\n");
++     WRITE(p, "ld = normalize(v_4.xyz);\n");
++     WRITE(p, "ld.z = abs(ld.z) * 5.0;\n");
++    WRITE(p, " diff1 =fogcolor_inverse;\n");
++     WRITE(p, "diff2 =  fogcolor *ll;\n");
++
++    WRITE(p, " lightPositions[0].z =v_4.z* 1000.0;\n");
++    WRITE(p, " lightPositions[1].z = v_3.z * 1000.0;\n");
++
++    WRITE(p, " lightColors[0] = fogcolor;\n");
++    WRITE(p, " lightColors[1] = fogcolor_inverse;\n");
++   WRITE(p, "}\n");
++   WRITE(p, "lightPositions[0].x = N.x * 1000.;\n");
++   WRITE(p, "lightPositions[0].y = N.y * 2000.;\n");
++
++  WRITE(p, "lightPositions[1].x = N.x * 3500.;\n");
++   WRITE(p, "lightPositions[1].y = N.y * 5000.;\n");
++
++
++   WRITE(p, "vec3 lightDir = normalize(ld * 1000.0 - v_2.xyz);\n");
++   WRITE(p, "float diff = max(dot(N, lightDir), 0.0);\n");
++
++   WRITE(p, "if (diff < min)diff = min;\n");
++
++  WRITE(p, " vec3 diffColor = mix(diff1,diff2 , diff);\n");
++
++   WRITE(p, "if (gl_FragCoord.w > 0.015) {\n");
++     WRITE(p, "vec3 V = normalize(camPos - v_2.xyz);\n");
++     WRITE(p, "vec3 F0 = vec3(0.04);\n");
++     WRITE(p, "F0 = mix(F0, albedo, metallic);\n");
++     WRITE(p, "vec3 Lo = vec3(0.0);\n");
++     WRITE(p, "for (int i = 0; i < 2; ++i) {\n");
++       WRITE(p, "vec3 L = normalize(lightPositions[i] - v_2.xyz);\n");
++      WRITE(p, " vec3 H = normalize(V + L);\n");
++       WRITE(p, "float NDF = DistributionGGX(N, H, roughness);\n");
++       WRITE(p, "float G = GeometrySmith(N, V, L, roughness);\n");
++       WRITE(p, "vec3 F = fresnelSchlick(clamp(dot(H, V), 0.0, 1.0), F0);\n");
++       WRITE(p, "vec3 numerator = NDF * G * F;\n");
++       WRITE(p, "float denominator = 4.0 * max(dot(N, V), 0.0) * max(dot(N, L), 0.0) +  0.0001;\n");
++       WRITE(p, "vec3 specular = numerator / denominator;\n");
++
++       WRITE(p, "vec3 kS = F;\n");
++       WRITE(p, "vec3 kD = vec3(1.0) - kS;\n");
++       WRITE(p, "kD *= 1.0 - metallic;\n");
++       WRITE(p, "float NdotL = max(dot(N, L), 0.0);\n");
++       WRITE(p, "Lo += (kD * albedo / PI + specular) * lightColors[i] * NdotL;\n");
++     WRITE(p, "}\n");
++
++     WRITE(p, "vec3 ambient = albedo ;\n");
++     WRITE(p, "vec3 color = Lo + ambient;\n");
++
++    WRITE(p, " color = color / (color + vec3(1.0));\n");
++     WRITE(p, "color *= diffColor;\n");
++
++
++     WRITE(p, "fragColor0 = vec4(color, 1.0);\n");
++
++
++   WRITE(p, "} else {\n");
++     WRITE(p, "fragColor0 = vec4(albedo * diffColor *  0.75, 1.0);\n");
++   WRITE(p, "}\n");
++ WRITE(p, "}\n");
++
++*/
++
++
++
++
++
++
++           }
++//////
++
++
++        }
++        WRITE(p, "void main() {\n");
++
++
+ 	}
+ 
+ 	if (compat.shaderLanguage == HLSL_D3D11 || compat.shaderLanguage == HLSL_D3D9) {
+@@ -544,26 +862,84 @@
+ 				doTextureProjection = false;
+ 			}
+ 
++
+ 			if (!shaderDepal) {
+ 				if (compat.shaderLanguage == HLSL_D3D11) {
+-					if (doTextureProjection) {
+-						WRITE(p, "  vec4 t = tex.Sample(samp, v_texcoord.xy / v_texcoord.z)%s;\n", bgraTexture ? ".bgra" : "");
++					if (texture3D) {
++						if (doTextureProjection) {
++							WRITE(p, "  vec4 t = tex.Sample(samp, vec3(v_texcoord.xy / v_texcoord.z, u_mipBias))%s;\n", bgraTexture ? ".bgra" : "");
++						} else {
++							WRITE(p, "  vec4 t = tex.Sample(samp, vec3(%s.xy, u_mipBias))%s;\n", texcoord, bgraTexture ? ".bgra" : "");
++						}
+ 					} else {
+-						WRITE(p, "  vec4 t = tex.Sample(samp, %s.xy)%s;\n", texcoord, bgraTexture ? ".bgra" : "");
++						if (doTextureProjection) {
++							WRITE(p, "  vec4 t = tex.Sample(samp, v_texcoord.xy / v_texcoord.z)%s;\n", bgraTexture ? ".bgra" : "");
++						} else {
++							WRITE(p, "  vec4 t = tex.Sample(samp, %s.xy)%s;\n", texcoord, bgraTexture ? ".bgra" : "");
++						}
+ 					}
+ 				} else if (compat.shaderLanguage == HLSL_D3D9) {
+-					if (doTextureProjection) {
+-						WRITE(p, "  vec4 t = tex2Dproj(tex, vec4(v_texcoord.x, v_texcoord.y, 0, v_texcoord.z))%s;\n", bgraTexture ? ".bgra" : "");
++					if (texture3D) {
++						if (doTextureProjection) {
++							WRITE(p, "  vec4 t = tex3Dproj(tex, vec4(v_texcoord.x, v_texcoord.y, u_mipBias, v_texcoord.z))%s;\n", bgraTexture ? ".bgra" : "");
++						} else {
++							WRITE(p, "  vec4 t = tex3D(tex, vec3(%s.x, %s.y, u_mipBias))%s;\n", texcoord, texcoord, bgraTexture ? ".bgra" : "");
++						}
+ 					} else {
+-						WRITE(p, "  vec4 t = tex2D(tex, %s.xy)%s;\n", texcoord, bgraTexture ? ".bgra" : "");
++						if (doTextureProjection) {
++							WRITE(p, "  vec4 t = tex2Dproj(tex, vec4(v_texcoord.x, v_texcoord.y, 0.0, v_texcoord.z))%s;\n", bgraTexture ? ".bgra" : "");
++						} else {
++							WRITE(p, "  vec4 t = tex2D(tex, %s.xy)%s;\n", texcoord, bgraTexture ? ".bgra" : "");
++						}
+ 					}
+ 				} else {
+-					if (doTextureProjection) {
+-						WRITE(p, "  vec4 t = %sProj(tex, %s);\n", compat.texture, texcoord);
++					// Note that here we're relying on the filter to be linear. We would have to otherwise to do two samples and manually filter in Z.
++					// Let's add that if we run into a case...
++					if (texture3D) {
++						if (doTextureProjection) {
++							WRITE(p, "  vec4 t = %sProj(tex, vec4(%s.xy, u_mipBias, %s.z));\n", compat.texture3D, texcoord, texcoord);
++						} else {
++							WRITE(p, "  vec4 t = %s(tex, vec3(%s.xy, u_mipBias));\n", compat.texture3D, texcoord);
++						}
+ 					} else {
+-						WRITE(p, "  vec4 t = %s(tex, %s.xy);\n", compat.texture, texcoord);
++						if (doTextureProjection) {
++							WRITE(p, "  vec4 t = %sProj(tex, %s);\n", compat.texture, texcoord);
++						} else {
++							WRITE(p, "  vec4 t = %s(tex, %s.xy);\n", compat.texture, texcoord);
++
++
++
++
++						}
+ 					}
+-				} 
++				}
++			} else if (shaderDepal && smoothedDepal) {
++				// Specific mode for Test Drive. Fixes the banding.
++				if (doTextureProjection) {
++					// We don't use textureProj because we need better control and it's probably not much of a savings anyway.
++					// However it is good for precision on older hardware like PowerVR.
++					WRITE(p, "  vec2 uv = %s.xy/%s.z;\n  vec2 uv_round;\n", texcoord, texcoord);
++				} else {
++					WRITE(p, "  vec2 uv = %s.xy;\n  vec2 uv_round;\n", texcoord);
++				}
++				// Restrictions on this are checked before setting the smoothed flag.
++				// Only RGB565 and RGBA5551 are supported, and only the specific shifts hitting the
++				// channels directly.
++				// Also, since we know the CLUT is smooth, we do not need to do the bilinear filter manually, we can just
++				// lookup with the filtered value once.
++				WRITE(p, "  vec4 t = %s(tex, %s.xy);\n", compat.texture, texcoord);
++				WRITE(p, "  uint depalShift = (u_depal_mask_shift_off_fmt >> 8) & 0xFFU;\n");
++				WRITE(p, "  uint depalFmt = (u_depal_mask_shift_off_fmt >> 24) & 0x3U;\n");
++				WRITE(p, "  float index0 = t.r;\n");
++				WRITE(p, "  float factor = 31.0 / 256.0;\n");
++				WRITE(p, "  if (depalFmt == 0u) {\n");  // yes, different versions of Test Drive use different formats. Could do compile time by adding more compat flags but meh.
++				WRITE(p, "    if (depalShift == 5u) { index0 = t.g; factor = 63.0 / 256.0; }\n");
++				WRITE(p, "    else if (depalShift == 11u) { index0 = t.b; }\n");
++				WRITE(p, "  } else {\n");
++				WRITE(p, "    if (depalShift == 5u) { index0 = t.g; }\n");
++				WRITE(p, "    else if (depalShift == 10u) { index0 = t.b; }\n");
++				WRITE(p, "  }\n");
++				WRITE(p, "  t = %s(pal, vec2(index0 * factor, 0.0));\n", compat.texture);
+ 			} else {
+ 				if (doTextureProjection) {
+ 					// We don't use textureProj because we need better control and it's probably not much of a savings anyway.
+@@ -572,7 +948,7 @@
+ 				} else {
+ 					WRITE(p, "  vec2 uv = %s.xy;\n  vec2 uv_round;\n", texcoord);
+ 				}
+-				WRITE(p, "  vec2 tsize = vec2(textureSize(tex, 0));\n");
++				WRITE(p, "  vec2 tsize = vec2(textureSize(tex, 0).xy);\n");
+ 				WRITE(p, "  vec2 fraction;\n");
+ 				WRITE(p, "  bool bilinear = (u_depal_mask_shift_off_fmt >> 31) != 0U;\n");
+ 				WRITE(p, "  if (bilinear) {\n");
+@@ -993,8 +1369,8 @@
+ 		break;
+ 
+ 	case REPLACE_ALPHA_NO:
+-		WRITE(p, "  %s = v;\n", compat.fragColor0);
+-		break;
++            WRITE(p, "  %s = v;\n", compat.fragColor0);
++            break;
+ 
+ 	default:
+ 		*errorString = "Bad stencil-to-alpha type, corrupt ID?";
+@@ -1020,7 +1396,9 @@
+ 
+ 	// Final color computed - apply color write mask.
+ 	// TODO: Maybe optimize to only do math on the affected channels?
+-	// Or .. meh.
++	// Or .. meh. That would require more shader bits. Though we could
++	// of course optimize for the common mask 0xF00000, though again, blue-to-alpha
++	// does a better job with that.
+ 	if (colorWriteMask) {
+ 		WRITE(p, "  highp uint v32 = packUnorm4x8(%s);\n", compat.fragColor0);
+ 		WRITE(p, "  highp uint d32 = packUnorm4x8(destColor);\n");
+@@ -1046,7 +1424,7 @@
+ 				WRITE(p, "  z = floor(z * %f) * (1.0 / %f);\n", scale, scale);
+ 			}
+ 		} else {
+-			WRITE(p, "  z = (1.0/65535.0) * floor(z * 65535.0);\n");
++			WRITE(p, "  z = (1.0 / 65535.0) * floor(z * 65535.0);\n");
+ 		}
+ 		WRITE(p, "  gl_FragDepth = z;\n");
+ 	} else if (useDiscardStencilBugWorkaround) {
+@@ -1057,16 +1435,109 @@
+ 		WRITE(p, "  gl_FragDepth = gl_FragCoord.z;\n");
+ 	}
+ 
+-	if (compat.shaderLanguage == HLSL_D3D11) {
++	if (compat.shaderLanguage == HLSL_D3D11 || compat.shaderLanguage == HLSL_D3D9) {
+ 		if (writeDepth) {
+ 			WRITE(p, "  outfragment.depth = gl_FragDepth;\n");
+ 		}
+ 		WRITE(p, "  return outfragment;\n");
+-	} else if (compat.shaderLanguage == HLSL_D3D9) {
+-		WRITE(p, "  return target;\n");
+ 	}
++/*
++if(is_opengles) {
++
++    if (flag_value == 0x32 ){
++
++ 
++        WRITE(p, " if (flag == 1) {\n");
++                WRITE(p, "albedo = t.xyz;\n");
++                WRITE(p, "PBR__2_0();\n");
++                WRITE(p, "}\n");
++    }
++
++    if (flag_value == 0x2032 ) {
++
++                WRITE(p, "if (flag == 1) {\n");
++                WRITE(p, "vec4 tex_color = t;\n");
++                WRITE(p, "if (tex_color.a > 0.15) {\n");
++                WRITE(p, "albedo = tex_color.rgb;\n");
++                WRITE(p, "roughness = 1.0 - (t.a-roughness);\n");
++                WRITE(p, "PBR__2_0();\n");
++                WRITE(p, "} else {\n");
++                WRITE(p, "fragColor0 = vec4(tex_color.rgb, 1.0);\n");
++                WRITE(p, "}\n");
++                WRITE(p, "}\n");
+ 
+-	WRITE(p, "}\n");
++    }
++
++}
++*/
++
++    WRITE(p, "}\n"); //main结束
++
++
++
++    WRITE(p,"\n");
++    WRITE(p,"\n");
++    if(highpFog) WRITE(p,"//    highpFog 0\n");
++    if( enableFragmentTestCache  ) WRITE(p,"// enableFragmentTestCache 1\n");
++    if( texture3D  ) WRITE(p,"// texture3D 2\n");
++    if( lmode  ) WRITE(p,"// lmode 3\n");
++    if( doTexture  ) WRITE(p,"// doTexture  4\n ");
++    if(  enableFog ) WRITE(p,"// enableFog  5\n");
++    if( enableAlphaTest  ) WRITE(p,"// enableAlphaTest   6\n");
++    if(  alphaTestAgainstZero ) WRITE(p,"// alphaTestAgainstZero    7\n");
++    if( testForceToZero  ) WRITE(p,"//  testForceToZero   8\n");
++    if( enableColorTest  ) WRITE(p,"// enableColorTest   9\n");
++    if(  colorTestAgainstZero ) WRITE(p,"// colorTestAgainstZero   10\n ");
++    if( enableColorDoubling  ) WRITE(p,"// enableColorDoubling    11\n");
++    if( doTextureProjection  ) WRITE(p,"// doTextureProjection    12\n");
++    if( doTextureAlpha) WRITE(p,"// doTextureAlpha    13\n");
++    if( flatBug  ) WRITE(p,"// flatBug    14  \n");
++    if(  doFlatShading ) WRITE(p,"// doFlatShading  15 \n");
++    if( shaderDepal  ) WRITE(p,"// shaderDepal    16\n");
++    if( smoothedDepal  ) WRITE(p,"// smoothedDepal    17\n");
++    if( bgraTexture  ) WRITE(p,"// bgraTexture    18\n");
++    if( colorWriteMask  ) WRITE(p,"// colorWriteMask    19\n");
++    if(  needShaderTexClamp ) WRITE(p,"// needShaderTexClamp     20\n");
++    if( blueToAlpha  ) WRITE(p,"// blueToAlpha     21\n");
++    if( isModeClear  ) WRITE(p,"// isModeClear    22\n");
++    if(  useDiscardStencilBugWorkaround ) WRITE(p,"// useDiscardStencilBugWorkaround     23\n");
++    if(  readFramebuffer ) WRITE(p,"// readFramebuffer    24\n");
++    if( readFramebufferTex  ) WRITE(p,"// readFramebufferTex     25\n");
++    if(  needFragCoord ) WRITE(p,"// needFragCoord     26\n");
++    if( writeDepth  ) WRITE(p,"// writeDepth    27\n");
++    if(  hasPackUnorm4x8 ) WRITE(p,"// hasPackUnorm4x8    28\n\n ");
++    WRITE(p, "//flag_value = 0x%x \n",flag_value);
++
++
++
++#ifdef __FRAGMENT_GLSL_FILE__
++
++    //16384
++    if(is_opengles) {
++        std::ifstream glsl_in(dir_path + "/" + out_name);
++        if (glsl_in.is_open()) {
++            memset(buffer, 0x20, 16384);
++            int file_size = 0;
++            glsl_in.seekg(0, glsl_in.end);
++            file_size = glsl_in.tellg();
++            glsl_in.seekg(0, glsl_in.beg);
++            char *new_code = new char[file_size];
++            memset(new_code, 0x00, file_size);
++            glsl_in.read(new_code, file_size);
++            WRITE(p, new_code);
++            delete[]new_code;
++            glsl_in.close();
++            
++        } else {
++            std::ofstream glsl_out(dir_path + "/" + out_name);
++            if (glsl_out.is_open()) {
++                glsl_out.write( buffer , 16384 );
++                glsl_out.close();
++            }
++        }
++    }
++#endif
+ 
+ 	return true;
+ }
++
+diff -Naur ogppsspp/VertexShaderGenerator.cpp zydppsspp/VertexShaderGenerator.cpp
+--- ogppsspp/VertexShaderGenerator.cpp	2022-12-18 13:22:57.784384269 +0800
++++ zydppsspp/VertexShaderGenerator.cpp	2022-12-18 13:12:02.949124551 +0800
+@@ -31,10 +31,19 @@
+ #include "GPU/Common/VertexDecoderCommon.h"
+ #include "GPU/Common/VertexShaderGenerator.h"
+ 
++
++#include "rapidjson/document.h"
++#include "rapidjson/writer.h"
++#include "rapidjson/stringbuffer.h"
++#include <bitset>
++#include <fstream>
++
+ #undef WRITE
+ 
+ #define WRITE(p, ...) p.F(__VA_ARGS__)
+ 
++
++
+ static const char * const boneWeightAttrDecl[9] = {
+ 	"#ERROR#",
+ 	"attribute mediump float w1;\n",
+@@ -128,9 +137,11 @@
+ 
+ extern const char *vulkan_glsl_preamble_vs;
+ extern const char *hlsl_preamble_vs;
+-
++#define __VERTEXT_GLSL_FILE__
+ bool GenerateVertexShader(const VShaderID &id, char *buffer, const ShaderLanguageDesc &compat, Draw::Bugs bugs, uint32_t *attrMask, uint64_t *uniformMask, std::string *errorString) {
+-	*attrMask = 0;
++
++    //16384
++    *attrMask = 0;
+ 	*uniformMask = 0;
+ 
+ 	bool highpFog = false;
+@@ -142,7 +153,7 @@
+ 			gl_exts.push_back("#extension GL_EXT_gpu_shader4 : enable");
+ 		}
+ 		if (gl_extensions.EXT_clip_cull_distance && id.Bit(VS_BIT_VERTEX_RANGE_CULLING)) {
+-			gl_exts.push_back("#extension GL_EXT_clip_cull_distance : enable");
++			gl_exts.push_back("#extension GL_EXT_clip_cull_distance : enable\n");
+ 		}
+ 		if (gl_extensions.APPLE_clip_distance && id.Bit(VS_BIT_VERTEX_RANGE_CULLING)) {
+ 			gl_exts.push_back("#extension GL_APPLE_clip_distance : enable");
+@@ -224,7 +235,110 @@
+ 
+ 	bool vertexRangeCulling = id.Bit(VS_BIT_VERTEX_RANGE_CULLING) && !isModeThrough;
+ 
+-	if (compat.shaderLanguage == GLSL_VULKAN) {
++
++
++    enum flag_name{
++        _highpFog = 0,
++        _highpTexcoord  ,
++        _isModeThrough ,
++        _lmode  ,
++        _doTexture,
++        _doTextureTransform  ,
++        _doShadeMapping  ,
++        _flatBug ,
++        _needsZWHack  ,
++        _doFlatShading ,
++        _useHWTransform  ,
++        _hasColor ,
++        _hasNormal  ,
++        _hasTexcoord  ,
++        _enableFog ,
++        _flipNormal ,
++        _enableBones ,
++        _enableLighting ,
++        _doBezier  ,
++        _doSpline  ,
++        _hasColorTess  ,
++        _hasTexcoordTess  ,
++        _hasNormalTess ,
++        _flipNormalTess ,
++        _texCoordInVec3  ,
++        _vertexRangeCulling
++
++    };
++
++    std::bitset<26> flag_bits;
++    flag_bits.reset();
++    flag_bits[_highpFog] = highpFog;
++    flag_bits[_highpTexcoord] = highpTexcoord;
++    flag_bits[_isModeThrough] = isModeThrough;
++    flag_bits[_lmode] = lmode;
++    flag_bits[_doTexture] = doTexture;
++    flag_bits[_doTextureTransform] = doTextureTransform;
++    flag_bits[_doShadeMapping] = doShadeMapping;
++    flag_bits[_flatBug] = flatBug;
++    flag_bits[_needsZWHack] = needsZWHack;
++    flag_bits[_doFlatShading] = doFlatShading;
++    flag_bits[_useHWTransform] = useHWTransform;
++    flag_bits[_hasColor] = hasColor;
++    flag_bits[_hasNormal] = hasNormal;
++    flag_bits[_hasTexcoord] = hasTexcoord;
++    flag_bits[_enableFog] = enableFog;
++    flag_bits[_flipNormal] = flipNormal;
++    flag_bits[_enableBones] = enableBones;
++    flag_bits[_enableLighting] = enableLighting;
++    flag_bits[_doBezier] = doBezier;
++    flag_bits[_doSpline] = doSpline;
++    flag_bits[_hasColorTess] = hasColorTess;
++    flag_bits[_hasTexcoordTess] = hasTexcoordTess;
++    flag_bits[_hasNormalTess] = hasNormalTess;
++    flag_bits[_flipNormalTess] = flipNormalTess;
++    flag_bits[_texCoordInVec3] = texCoordInVec3;
++    flag_bits[_vertexRangeCulling] = vertexRangeCulling;
++    unsigned long flag_value = flag_bits.to_ulong();
++    bool is_opengles = false;
++
++#ifdef __VERTEXT_GLSL_FILE__
++    std::string dir_path = "/storage/emulated/0/Android/data/org.ppsspp.ppsspp/files/glsl";
++    char file_name[128]={0};
++    sprintf(file_name,"Vertex_0x%x.glsl",flag_value);
++    std::string out_name = file_name;
++#endif
++
++
++/*
++    std::string json_path = dir_path + "/" + std::string(file_name)+".varying.json" ;
++    std::ifstream vs_out_json_ifs(json_path );
++    char* json_code = nullptr ;
++    int file_size = 0;
++    bool ParseOK = false;
++    if(vs_out_json_ifs.is_open()) {
++        vs_out_json_ifs.seekg(0,vs_out_json_ifs.end);
++        file_size = vs_out_json_ifs.tellg();
++        vs_out_json_ifs.seekg(0,vs_out_json_ifs.beg);
++        json_code = new char[file_size];
++        memset(json_code,0x00,file_size);
++        vs_out_json_ifs.read(json_code,file_size);
++        delete [] json_code;
++        vs_out_json_ifs.close();
++    }else{
++        std::ofstream json_gen(json_path  );
++        if(json_gen.is_open())
++            json_gen.close();
++    }
++
++    rapidjson::Document d;
++
++    if(json_code){
++        if(!d.Parse(json_code).HasParseError()) {
++            if (d.IsObject()) ParseOK = true;
++        }
++    }
++*/
++
++
++
++    if (compat.shaderLanguage == GLSL_VULKAN) {
+ 		WRITE(p, "\n");
+ 		WRITE(p, "layout (std140, set = 0, binding = 3) uniform baseVars {\n%s};\n", ub_baseStr);
+ 		if (enableLighting || doShadeMapping)
+@@ -534,6 +648,15 @@
+ 			WRITE(p, "uniform lowp float u_rotation;\n");
+ 		}
+ 
++
++
++
++
++#ifdef OPENXR
++		WRITE(p, "uniform lowp float u_scaleX;\n");
++		WRITE(p, "uniform lowp float u_scaleY;\n");
++#endif
++
+ 		if (useHWTransform || !hasColor) {
+ 			WRITE(p, "uniform lowp vec4 u_matambientalpha;\n");  // matambient + matalpha
+ 			*uniformMask |= DIRTY_MATAMBIENTALPHA;
+@@ -565,11 +688,20 @@
+ 				WRITE(p, "%s highp float v_fogdepth;\n", compat.varying_vs);
+ 			} else {
+ 				WRITE(p, "%s mediump float v_fogdepth;\n", compat.varying_vs);
++
++
+ 			}
+ 		}
+-	}
+ 
+-	// See comment above this function (GenerateVertexShader).
++
++
++
++    }
++
++
++
++
++    // See comment above this function (GenerateVertexShader).
+ 	if (!isModeThrough && gstate_c.Supports(GPU_ROUND_DEPTH_TO_16BIT)) {
+ 		// Apply the projection and viewport to get the Z buffer value, floor to integer, undo the viewport and projection.
+ 		WRITE(p, "\nvec4 depthRoundZVP(vec4 v) {\n");
+@@ -744,6 +876,7 @@
+ 		WRITE(p, "}\n");
+ 	}
+ 
++
+ 	if (useHWTransform) {
+ 		WRITE(p, "vec3 normalizeOr001(vec3 v) {\n");
+ 		WRITE(p, "   return length(v) == 0.0 ? vec3(0.0, 0.0, 1.0) : normalize(v);\n");
+@@ -751,7 +884,27 @@
+ 	}
+ 
+ 	if (ShaderLanguageIsOpenGL(compat.shaderLanguage) || compat.shaderLanguage == GLSL_VULKAN) {
++
++        if (ShaderLanguageIsOpenGL(compat.shaderLanguage)) {
++            is_opengles = true;
++
++            //flag_value
++            WRITE(p, "//****** my_varying_vs *********\n");
++            WRITE(p, "%s lowp flat int flag;\n", compat.varying_vs);
++            WRITE(p, "%s highp vec4 v_1;\n", compat.varying_vs);
++            WRITE(p, "%s highp vec4 v_2;\n", compat.varying_vs);
++            WRITE(p, "%s highp vec4 v_3;\n", compat.varying_vs);
++            WRITE(p, "%s highp vec4 v_4;\n", compat.varying_vs);
++            WRITE(p, "%s highp vec4 v_5;\n", compat.varying_vs);
++#ifdef __VERTEXT_GLSL_FILE__
++
++            WRITE(p, "%s highp vec4 v_6;\n", compat.varying_vs);
++            WRITE(p, "%s highp vec4 v_7;\n", compat.varying_vs);
++            WRITE(p, "%s highp vec4 v_8;\n", compat.varying_vs);
++#endif
++        }
+ 		WRITE(p, "void main() {\n");
++
+ 	} else if (compat.shaderLanguage == HLSL_D3D9 || compat.shaderLanguage == HLSL_D3D11) {
+ 		WRITE(p, "VS_OUT main(VS_IN In) {\n");
+ 		WRITE(p, "  VS_OUT Out;\n");
+@@ -784,6 +937,10 @@
+ 		}
+ 	}
+ 
++
++
++
++
+ 	if (!useHWTransform) {
+ 		// Simple pass-through of vertex data to fragment shader
+ 		if (doTexture) {
+@@ -896,7 +1053,6 @@
+ 		}
+ 
+ 		WRITE(p, "  vec4 viewPos = vec4(mul(vec4(worldpos, 1.0), u_view).xyz, 1.0);\n");
+-
+ 		// Final view and projection transforms.
+ 		if (gstate_c.Supports(GPU_ROUND_DEPTH_TO_16BIT)) {
+ 			WRITE(p, "  vec4 outPos = depthRoundZVP(mul(u_proj, viewPos));\n");
+@@ -920,6 +1076,13 @@
+ 		bool specularIsZero = true;
+ 		bool distanceNeeded = false;
+ 		bool anySpots = false;
++
++
++
++
++
++
++
+ 		if (enableLighting) {
+ 			WRITE(p, "  lowp vec4 lightSum0 = u_ambient * %s + vec4(u_matemissive, 0.0);\n", ambientStr);
+ 
+@@ -975,7 +1138,8 @@
+ 			bool doSpecular = comp == GE_LIGHTCOMP_BOTH;
+ 			bool poweredDiffuse = comp == GE_LIGHTCOMP_ONLYPOWDIFFUSE;
+ 
+-			WRITE(p, "  ldot = dot(toLight, worldnormal);\n");
++			WRITE(p, "  ldot = dot(toLight, worldnormal);  \n");
++
+ 			if (poweredDiffuse) {
+ 				// pow(0.0, 0.0) may be undefined, but the PSP seems to treat it as 1.0.
+ 				// Seen in Tales of the World: Radiant Mythology (#2424.)
+@@ -1026,6 +1190,7 @@
+ 			WRITE(p, "  lightSum0.rgb += (u_lightambient%i * %s.rgb + diffuse)%s;\n", i, ambientStr, timesLightScale);
+ 		}
+ 
++
+ 		if (enableLighting) {
+ 			// Sum up ambient, emissive here.
+ 			if (lmode) {
+@@ -1139,6 +1304,11 @@
+ 			WRITE(p, "  %sv_fogdepth = (viewPos.z + u_fogcoef.x) * u_fogcoef.y;\n", compat.vsOutPrefix);
+ 	}
+ 
++
++
++
++
++
+ 	if (vertexRangeCulling) {
+ 		WRITE(p, "  vec3 projPos = outPos.xyz / outPos.w;\n");
+ 		WRITE(p, "  float projZ = (projPos.z - u_depthRange.z) * u_depthRange.w;\n");
+@@ -1177,16 +1347,108 @@
+ 
+ 	// We've named the output gl_Position in HLSL as well.
+ 	WRITE(p, "  %sgl_Position = outPos;\n", compat.vsOutPrefix);
++    //角色   插入
++
++    //
++    /*
++    if(is_opengles) {
++        if (flag_value == 0x2027410) {
++            WRITE(p, " flag = 1;\n");
++
++            WRITE(p, "  mat3 v ;\n");
++                    WRITE(p, "  v[0] = vec3(u_view[0].xyz   );\n");
++                    WRITE(p, "  v[1] = vec3(u_view[1].xyz  );\n");
++                    WRITE(p, "  v[2] = vec3(u_view[2].xyz  );\n");
++
++                    WRITE(p, "  v_1 = vec4(worldnormal.xyz,1.0);\n");
++                    WRITE(p, "  v_2 = vec4(worldpos,1.0);\n");
++                    WRITE(p, "  v_3 =   vec4( normalize(vec3 (0.,10000.,2000.) *v),1.0);\n");
++                    WRITE(p, " v_4 =   vec4(normalize(vec3 (0.,10000.,-2000.) *v),1.0);\n");
++                    WRITE(p, "  v_5 =   vec4(v_3.x,-v_3.y,v_3.z,1.0);\n");
++
++        }else if(flag_value == 0x2006410){
++            WRITE(p, " flag = 2;\n");
++        }
++        else {
++            WRITE(p, " flag = 0;\n");
++        }
++    }
++
++
++    */
+ 
+ 	if (needsZWHack) {
+ 		// See comment in thin3d_vulkan.cpp.
+ 		WRITE(p, "  if (%sgl_Position.z == %sgl_Position.w) %sgl_Position.z *= 0.999999;\n",
+ 			compat.vsOutPrefix, compat.vsOutPrefix, compat.vsOutPrefix);
+ 	}
++#ifdef OPENXR
++	WRITE(p, "  if ((u_scaleX < 0.99) || (u_scaleY < 0.99)) {\n");
++	WRITE(p, "    %sgl_Position.x *= u_scaleX;\n", compat.vsOutPrefix);
++	WRITE(p, "    %sgl_Position.y *= u_scaleY;\n", compat.vsOutPrefix);
++	WRITE(p, "  }\n");
++#endif
+ 
+ 	if (compat.shaderLanguage == HLSL_D3D11 || compat.shaderLanguage == HLSL_D3D9) {
+ 		WRITE(p, "  return Out;\n");
+ 	}
+-	WRITE(p, "}\n");
++
++    WRITE(p, "}\n");
++
++    WRITE(p,"\n");
++    WRITE(p,"\n");
++    if(highpFog) WRITE(p,"//    highpFog  0 \n");
++    if( highpTexcoord  ) WRITE(p,"// highpTexcoord   1 \n");
++    if( isModeThrough  ) WRITE(p,"//  isModeThrough  2 \n");
++    if( lmode  ) WRITE(p,"//lmode    3 \n");
++    if(  doTexture ) WRITE(p,"//  doTexture  4 \n");
++    if( doTextureTransform  ) WRITE(p,"// doTextureTransform  5  \n");
++    if( doShadeMapping  ) WRITE(p,"// doShadeMapping   6 \n");
++    if( flatBug  ) WRITE(p,"// flatBug   7 \n");
++    if( needsZWHack  ) WRITE(p,"// needsZWHack    8\n");
++    if( doFlatShading  ) WRITE(p,"//doFlatShading    9 \n");
++    if( useHWTransform  ) WRITE(p,"// useHWTransform   10 \n");
++    if( hasColor  ) WRITE(p,"// hasColor   11 \n");
++    if( hasNormal  ) WRITE(p,"//hasNormal    12 \n");
++    if( hasTexcoord  ) WRITE(p,"// hasTexcoord   13 \n");
++    if(  enableFog ) WRITE(p,"//  enableFog  14 \n");
++    if( flipNormal  ) WRITE(p,"// flipNormal   15 \n");
++    if( enableBones  ) WRITE(p,"// enableBones   16 \n");
++    if( enableLighting  ) WRITE(p,"// enableLighting   17 \n");
++    if( doBezier  ) WRITE(p,"//  doBezier  18 \n");
++    if( doSpline  ) WRITE(p,"//doSpline    19 \n");
++    if( hasColorTess  ) WRITE(p,"// hasColorTess   20 \n");
++    if( hasTexcoordTess  ) WRITE(p,"// hasTexcoordTess  21  \n");
++    if( hasNormalTess  ) WRITE(p,"// hasNormalTess   22 \n");
++    if( flipNormalTess  ) WRITE(p,"// flipNormalTess   23 \n");
++    if( texCoordInVec3  ) WRITE(p,"//  texCoordInVec3  24 \n");
++    if( vertexRangeCulling  ) WRITE(p,"// vertexRangeCulling   25 \n");
++    WRITE(p,"//flag_value: 0x%x \n",flag_value);
++#ifdef __VERTEXT_GLSL_FILE__
++if(is_opengles) {
++    std::ifstream glsl_in(dir_path + "/" + out_name);
++    if (glsl_in.is_open()) {
++        memset(buffer, 0x20, 16384);
++        int file_size = 0;
++        glsl_in.seekg(0, glsl_in.end);
++        file_size = glsl_in.tellg();
++        glsl_in.seekg(0, glsl_in.beg);
++        char *new_code = new char[file_size];
++        memset(new_code, 0x00, file_size);
++        glsl_in.read(new_code, file_size);
++        WRITE(p, new_code);
++        delete[]new_code;
++        glsl_in.close();
++
++    } else {
++        std::ofstream glsl_out(dir_path + "/" + out_name);
++        if (glsl_out.is_open()) {
++            glsl_out.write( buffer , 16384 ) ;
++            glsl_out.close();
++        }
++    }
++}
++#endif
++
+ 	return true;
+ }
